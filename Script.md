@@ -1,11 +1,10 @@
 --[[
-    TestToolkit v58 - LocalScript (100% cliente)
+    TestToolkit v59 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v58:
-      - Invisível via Seat Bug (réplica do script Ziaa)
-      - Invisível v4 com detector auto-desligar
-      - Hitbox universal (só players)
+    v59:
+      - Removido Invisível v4 (efeito local) — só fica o Seat Bug
+      - Corrigido: Seat é destruído ao desligar (sem caixa fantasma)
 ]]
 
 local Players = game:GetService("Players")
@@ -61,7 +60,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v58 carregando...")
+bootShow("TestToolkit v59 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -108,14 +107,7 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
 
-	Invisible = false,
-	InvisibleReapply = 0.05,
-	InvisibleHideName = true,
-	InvisibleHideAccessories = true,
-	InvisibleHideBody = true,
-	InvisibleMuteFootsteps = true,
-	InvisibleFakeDeath = false,
-
+	-- SEAT INVISIBILITY
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
 	SeatInvisibleY = 84,
@@ -148,7 +140,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, PerfMode = true, FPSUnlock = true, MobileEdit = true,
 	HUDEdit = true, Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	Invisible = true, SeatInvisible = true,
+	SeatInvisible = true,
 }
 
 local function serializeSettings()
@@ -1461,324 +1453,20 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- INVISÍVEL v4 — auto-desliga quando detecta que não vai funcionar
---------------------------------------------------------------------
-local Invisible = {}
-do
-	local savedData = setmetatable({}, { __mode = "k" })
-	local savedNames = setmetatable({}, { __mode = "k" })
-	local active = false
-	local lastCheckAt = 0
-	local checkedThisSession = false
-	local disabledByDetector = false
-
-	local function savePart(part)
-		if savedData[part] then return end
-		if part:IsA("BasePart") then
-			savedData[part] = {
-				Kind = "Part",
-				Transparency = part.Transparency,
-				LocalTransparencyModifier = part.LocalTransparencyModifier,
-			}
-		elseif part:IsA("Decal") then
-			savedData[part] = {
-				Kind = "Decal",
-				Transparency = part.Transparency,
-			}
-		end
-	end
-
-	local function restorePart(part)
-		local data = savedData[part]
-		if not data then return end
-		pcall(function()
-			if data.Kind == "Part" then
-				part.Transparency = data.Transparency
-				part.LocalTransparencyModifier = data.LocalTransparencyModifier
-			elseif data.Kind == "Decal" then
-				part.Transparency = data.Transparency
-			end
-		end)
-		savedData[part] = nil
-	end
-
-	local function applyPart(part, selfGhost)
-		if part:IsA("BasePart") then
-			savePart(part)
-			pcall(function()
-				part.LocalTransparencyModifier = 1
-				if selfGhost then
-					part.Transparency = 0.5
-				else
-					part.Transparency = 1
-				end
-			end)
-		elseif part:IsA("Decal") then
-			savePart(part)
-			pcall(function()
-				part.Transparency = 1
-			end)
-		end
-	end
-
-	local function detectExposers(char)
-		local found = {}
-		if not char then return found end
-
-		local hl = char:FindFirstChildOfClass("Highlight")
-		if hl and hl.Enabled then
-			found[#found + 1] = "Highlight (contorno colorido)"
-		end
-
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("SelectionBox") and d.Visible then
-				found[#found + 1] = "SelectionBox (caixa de seleção)"
-				break
-			end
-		end
-
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BoxHandleAdornment") then
-				found[#found + 1] = "BoxHandleAdornment (caixa em volta)"
-				break
-			end
-		end
-
-		local head = char:FindFirstChild("Head")
-		if head then
-			for _, d in ipairs(head:GetChildren()) do
-				if d:IsA("BillboardGui") and d.Enabled then
-					local hasText = false
-					for _, sub in ipairs(d:GetDescendants()) do
-						if sub:IsA("TextLabel") and sub.Visible and sub.Text ~= "" then
-							hasText = true
-							break
-						end
-					end
-					if hasText then
-						found[#found + 1] = "BillboardGui com nome (visível pelo nome)"
-						break
-					end
-				end
-			end
-		end
-
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("ParticleEmitter") and d.Enabled then
-				found[#found + 1] = "ParticleEmitter (efeito visível)"
-				break
-			end
-		end
-
-		local anyPart = char:FindFirstChild("Head")
-		if anyPart and anyPart:IsA("BasePart") then
-			if anyPart.LocalTransparencyModifier == 0 and active then
-				found[#found + 1] = "Servidor está revertendo LTM (anti-invisível ativo)"
-			end
-		end
-
-		return found
-	end
-
-	local function applyChar(char, selfGhost)
-		if not char then return end
-
-		if Settings.InvisibleHideBody then
-			for _, d in ipairs(char:GetDescendants()) do
-				if d:IsA("BasePart") then
-					applyPart(d, selfGhost)
-				elseif d:IsA("Decal") then
-					applyPart(d, selfGhost)
-				end
-			end
-		end
-
-		if Settings.InvisibleHideAccessories then
-			for _, d in ipairs(char:GetChildren()) do
-				if d:IsA("Accessory") then
-					for _, ad in ipairs(d:GetDescendants()) do
-						if ad:IsA("BasePart") then
-							applyPart(ad, selfGhost)
-						elseif ad:IsA("Decal") then
-							applyPart(ad, selfGhost)
-						end
-					end
-				end
-			end
-		end
-
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum and Settings.InvisibleHideName then
-			if savedNames[hum] == nil then
-				savedNames[hum] = {
-					DisplayName = hum.DisplayName,
-					NameDisplayDistance = hum.NameDisplayDistance,
-					HealthDisplayDistance = hum.HealthDisplayDistance,
-				}
-			end
-			pcall(function()
-				hum.DisplayName = ""
-				hum.NameDisplayDistance = 0
-				hum.HealthDisplayDistance = 0
-			end)
-		end
-
-		if Settings.InvisibleMuteFootsteps then
-			for _, d in ipairs(char:GetDescendants()) do
-				if d:IsA("Sound") and (d.Name == "Running" or d.Name == "Climbing"
-					or d.Name == "Landing" or d.Name == "Jumping" or d.Name == "FreeFalling"
-					or d.Name == "Swimming" or d.Name == "Splash" or d.Name == "GettingUp") then
-					pcall(function() d.Volume = 0 end)
-				end
-			end
-		end
-	end
-
-	local function restoreAll()
-		local char = LocalPlayer.Character
-		if not char then return end
-
-		for part, _ in pairs(savedData) do
-			restorePart(part)
-		end
-
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if hum and savedNames[hum] then
-			local d = savedNames[hum]
-			pcall(function()
-				hum.DisplayName = d.DisplayName
-				hum.NameDisplayDistance = d.NameDisplayDistance
-				hum.HealthDisplayDistance = d.HealthDisplayDistance
-			end)
-			savedNames[hum] = nil
-		end
-
-		for _, s in ipairs(char:GetDescendants()) do
-			if s:IsA("Sound") then
-				pcall(function() s.Volume = 0.5 end)
-			end
-		end
-	end
-
-	local function autoDisable(reason)
-		disabledByDetector = true
-		Settings.Invisible = false
-		active = false
-		restoreAll()
-
-		if uiRefresh then pcall(uiRefresh) end
-
-		task.spawn(function()
-			notify("⚠ Invisível desligado automaticamente", "off")
-			task.wait(0.3)
-			notify("Motivo: " .. reason, "off")
-			task.wait(0.3)
-			notify("Este jogo tem proteção visual. Use 'Seat Bug' na aba Jogador.", "info")
-		end)
-
-		warn("[TestToolkit] Invisível auto-desligado. Motivo: " .. reason)
-	end
-
-	local function loop()
-		if not Settings.Invisible then
-			if active then
-				active = false
-				restoreAll()
-			end
-			return
-		end
-
-		local char = LocalPlayer.Character
-		if not char then return end
-
-		active = true
-		applyChar(char, true)
-
-		local now = os.clock()
-		if not checkedThisSession and now - lastCheckAt > 0.5 then
-			lastCheckAt = now
-			checkedThisSession = true
-			local exposers = detectExposers(char)
-			if #exposers > 0 then
-				task.defer(function()
-					autoDisable(exposers[1])
-				end)
-			end
-		end
-	end
-
-	Invisible.loop = loop
-	Invisible.restore = function()
-		active = false
-		restoreAll()
-	end
-	Invisible.detect = detectExposers
-	Invisible.resetCheck = function()
-		checkedThisSession = false
-		disabledByDetector = false
-	end
-
-	local function bindChar(char)
-		char.DescendantAdded:Connect(function(d)
-			if not Settings.Invisible then return end
-			task.defer(function()
-				if not char.Parent or not Settings.Invisible then return end
-				if d:IsA("BasePart") then
-					applyPart(d, true)
-				elseif d:IsA("Decal") then
-					applyPart(d, true)
-				end
-			end)
-		end)
-	end
-
-	if LocalPlayer.Character then bindChar(LocalPlayer.Character) end
-	LocalPlayer.CharacterAdded:Connect(function(char)
-		task.wait(0.3)
-		checkedThisSession = false
-		disabledByDetector = false
-		bindChar(char)
-	end)
-end
-
-RunService.RenderStepped:Connect(function()
-	if Settings.Invisible then
-		pcall(Invisible.loop)
-	end
-end)
-
-task.spawn(function()
-	while task.wait(0.05) do
-		if Settings.Invisible then
-			pcall(Invisible.loop)
-		end
-	end
-end)
-
-_G.TestToolkitCheckExposers = function()
-	local char = LocalPlayer.Character
-	if not char then
-		print("[TestToolkit] Sem personagem no momento.")
-		return
-	end
-	local exposers = Invisible.detect(char)
-	if #exposers == 0 then
-		print("[TestToolkit] Nenhum expositor detectado. Invisível deve funcionar aqui.")
-	else
-		print("[TestToolkit] Expositores encontrados:")
-		for i, e in ipairs(exposers) do
-			print("  " .. i .. ". " .. e)
-		end
-	end
-end
-
---------------------------------------------------------------------
--- INVISIBILIDADE VIA SEAT — réplica do script do Ziaa
+-- INVISIBILIDADE VIA SEAT (v59 — sem caixa fantasma)
 --------------------------------------------------------------------
 local SeatInvisible = {}
 do
 	local mySeat = nil
 	local active = false
+
+	local function cleanupSeat()
+		local existing = workspace:FindFirstChild("invischair")
+		if existing then
+			pcall(function() existing:Destroy() end)
+		end
+		mySeat = nil
+	end
 
 	local function findSafeCoords()
 		local bestPos = Vector3.new(-25.95, 84, 3537.55)
@@ -1808,80 +1496,54 @@ do
 		return bestPos
 	end
 
-	local function toggleInvisibility()
+	local function activate()
 		local char = LocalPlayer.Character
 		if not char then return end
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
 
-		active = not active
-		Settings.SeatInvisible = active
+		-- Limpa qualquer seat antigo antes de criar novo
+		cleanupSeat()
 
-		if active then
-			local hrp = char:FindFirstChild("HumanoidRootPart")
-			if not hrp then
-				active = false
-				Settings.SeatInvisible = false
-				return
-			end
+		local savedPosition = hrp.CFrame
+		local targetPos = Vector3.new(
+			Settings.SeatInvisibleX,
+			Settings.SeatInvisibleY,
+			Settings.SeatInvisibleZ
+		)
 
-			local savedPosition = hrp.CFrame
-			local targetPos = Vector3.new(
-				Settings.SeatInvisibleX,
-				Settings.SeatInvisibleY,
-				Settings.SeatInvisibleZ
-			)
+		char:MoveTo(targetPos)
+		task.wait(0.15)
 
-			char:MoveTo(targetPos)
-			task.wait(0.15)
+		local seat = Instance.new("Seat")
+		seat.Name = "invischair"
+		seat.Anchored = false
+		seat.CanCollide = false
+		seat.Transparency = 1
+		seat.Position = targetPos
+		seat.Parent = workspace
+		mySeat = seat
 
-			local seat = Instance.new("Seat")
-			seat.Name = "invischair"
-			seat.Anchored = false
-			seat.CanCollide = false
-			seat.Transparency = 1
-			seat.Position = targetPos
-			seat.Parent = workspace
-			mySeat = seat
+		local weld = Instance.new("Weld")
+		weld.Part0 = seat
+		weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+		weld.Parent = seat
 
-			local weld = Instance.new("Weld")
-			weld.Part0 = seat
-			weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-			weld.Parent = seat
+		task.wait()
 
-			task.wait()
+		seat.CFrame = savedPosition
 
-			seat.CFrame = savedPosition
-
-			for _, descendant in ipairs(char:GetDescendants()) do
-				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-					descendant.Transparency = 0.5
-				end
-			end
-		else
-			local invisChair = workspace:FindFirstChild("invischair")
-			if invisChair then invisChair:Destroy() end
-			mySeat = nil
-
-			if LocalPlayer.Character then
-				for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
-					if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-						descendant.Transparency = 0
-					end
-				end
+		for _, descendant in ipairs(char:GetDescendants()) do
+			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+				descendant.Transparency = 0.5
 			end
 		end
-
-		if uiRefresh then pcall(uiRefresh) end
 	end
 
-	SeatInvisible.toggle = toggleInvisibility
-	SeatInvisible.isActive = function() return active end
-	SeatInvisible.findSafeCoords = findSafeCoords
-	SeatInvisible.forceOff = function()
-		active = false
-		Settings.SeatInvisible = false
-		local invisChair = workspace:FindFirstChild("invischair")
-		if invisChair then invisChair:Destroy() end
-		mySeat = nil
+	local function deactivate()
+		-- Destrói IMEDIATAMENTE o seat (não espera loop)
+		cleanupSeat()
+		-- Restaura transparency de todas as partes
 		if LocalPlayer.Character then
 			for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
 				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
@@ -1891,16 +1553,44 @@ do
 		end
 	end
 
+	local function toggleInvisibility()
+		active = not active
+		Settings.SeatInvisible = active
+
+		if active then
+			activate()
+		else
+			deactivate()
+		end
+
+		if uiRefresh then pcall(uiRefresh) end
+	end
+
+	SeatInvisible.toggle = toggleInvisibility
+	SeatInvisible.isActive = function() return active end
+	SeatInvisible.findSafeCoords = findSafeCoords
+	SeatInvisible.forceOff = function()
+		if active then
+			active = false
+			Settings.SeatInvisible = false
+			deactivate()
+			if uiRefresh then pcall(uiRefresh) end
+		end
+	end
+
+	-- Loop de segurança: se o servidor apagar o seat por fora, desliga
 	task.spawn(function()
 		while task.wait(0.5) do
 			if active and (not mySeat or not mySeat.Parent) then
 				active = false
 				Settings.SeatInvisible = false
+				deactivate()
 				if uiRefresh then pcall(uiRefresh) end
 			end
 		end
 	end)
 
+	-- Re-aplica transparency só enquanto ativo (não re-cria seat fantasma)
 	task.spawn(function()
 		while task.wait(0.3) do
 			if active then
@@ -1921,9 +1611,7 @@ do
 	LocalPlayer.CharacterAdded:Connect(function()
 		active = false
 		Settings.SeatInvisible = false
-		local chair = workspace:FindFirstChild("invischair")
-		if chair then chair:Destroy() end
-		mySeat = nil
+		cleanupSeat()
 	end)
 end
 
@@ -2708,7 +2396,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v58"
+title.Text = "Test Toolkit v59"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2902,8 +2590,7 @@ local function newRow(height, className)
 	if r:IsA("TextButton") then
 		r.AutoButtonColor = false
 		r.Text = ""
-	end
-	corner(r, 8)
+	end	corner(r, 8)
 	r.Parent = currentPage
 	return r
 end
@@ -3711,27 +3398,10 @@ table.insert(keybindRows, addSection("Teclas (PC)"))
 addKeybind("Tecla do voo", "FlyKey", "Liga/desliga voo")
 addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 
-addSection("Invisível (efeito local)")
-addInfo("⚠ SÓ FUNCIONA EM JOGOS SEM ANTI-CHEAT. Se o jogo tiver "
-	.. "contorno (Highlight), BillboardGui de nome, ou validador de Transparency, "
-	.. "você vai continuar visível ou 'piscando'. O script detecta e avisa.", 60)
-addToggle("Invisível", "Invisible",
-	"Deixa seu personagem invisível (client-side)", function()
-		if not Settings.Invisible then
-			pcall(Invisible.restore)
-		end
-	end)
-addToggle("Ocultar nome", "InvisibleHideName", "Remove DisplayName e distância de visão")
-addToggle("Ocultar acessórios", "InvisibleHideAccessories", "Chapéus, mochilas, etc.")
-addToggle("Ocultar corpo", "InvisibleHideBody", "Head, torso, braços, pernas")
-addToggle("Silenciar passos", "InvisibleMuteFootsteps", "Sem som de movimento")
-addSlider("Re-aplicar a cada (s)", "InvisibleReapply", 0.01, 0.5, 0.01, 2,
-	"Menor = mais re-aplicações (pisca menos, gasta mais)")
-
 addSection("Invisibilidade (Seat Bug)")
-addInfo("⚠ Técnica diferente do 'Invisível'. Usa bug do Seat pra te tirar "
-	.. "da sincronia do servidor. Funciona em jogos sem validação de posição "
-	.. "server-side. Se for kickado/revertido, o jogo tem anti-cheat server-side.", 70)
+addInfo("⚠ Usa bug do Seat pra te tirar da sincronia do servidor. "
+	.. "Funciona em jogos sem validação de posição server-side. "
+	.. "Se for kickado/revertido, o jogo tem anti-cheat server-side.", 60)
 addToggle("Invisível (Seat Bug)", "SeatInvisible",
 	"Ativa a invisibilidade via bug do Seat (réplica do script Ziaa)", function()
 		pcall(SeatInvisible.toggle)
@@ -4452,7 +4122,6 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
 		if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
-		if Settings.Invisible then parts[#parts + 1] = "Invisível" end
 		if Settings.SeatInvisible then parts[#parts + 1] = "SeatInvis" end
 		if Settings.TriggerBot and triggerBotActive then parts[#parts + 1] = "Trigger" end
 		if Settings.AntiKill then parts[#parts + 1] = "AntiKill" end
@@ -4468,7 +4137,7 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v58 carregado  •  "
+	bootShow("TestToolkit v59 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
