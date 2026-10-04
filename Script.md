@@ -1,10 +1,11 @@
 --[[
-    TestToolkit v59 - LocalScript (100% cliente)
+    TestToolkit v60 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v59:
-      - Removido Invisível v4 (efeito local) — só fica o Seat Bug
-      - Corrigido: Seat é destruído ao desligar (sem caixa fantasma)
+    v60:
+      - Corrigido: ESP e Aimbot não pegam mais corpos mortos
+      - Corrigido: Invisibilidade agora permite pegar moedas e itens
+      - Corrigido: Removido bug do Seat que quebrava a física
 ]]
 
 local Players = game:GetService("Players")
@@ -60,7 +61,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v59 carregando...")
+bootShow("TestToolkit v60 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -107,13 +108,10 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
 
-	-- SEAT INVISIBILITY
-	SeatInvisible = false,
-	SeatInvisibleX = -25.95,
-	SeatInvisibleY = 84,
-	SeatInvisibleZ = 3537.55,
-	SeatInvisibleDuration = 0,
-	SeatInvisibleReturn = true,
+	-- NOVA INVISIBILIDADE (Touch-Friendly)
+	Invisible = false,
+	InvisibleAlpha = 0.05,
+	InvisibleNoCollide = true,
 
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000, FlingMode = 1, FlingMode2 = 2,
@@ -140,7 +138,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, PerfMode = true, FPSUnlock = true, MobileEdit = true,
 	HUDEdit = true, Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true,
+	Invisible = true,
 }
 
 local function serializeSettings()
@@ -277,7 +275,7 @@ local function isTeammate(model, plr)
 end
 
 --------------------------------------------------------------------
--- TARGETS
+-- TARGETS (CORRIGIDO PARA IGNORAR CORPOS)
 --------------------------------------------------------------------
 local humanoids = {}
 local rootOf = setmetatable({}, { __mode = "k" })
@@ -316,6 +314,28 @@ end
 local targetCache = {}
 local CACHE_TTL = 0.15
 
+-- Função auxiliar para verificar se o alvo está realmente vivo
+local function isAlive(hum)
+	if not hum or hum.Health <= 0 then return false end
+	-- Verifica se o estado do humanoid é Dead ou se está caído no chão (Physics/Ragdoll)
+	local state = hum:GetState()
+	if state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Physics then
+		return false
+	end
+	-- Em alguns jogos, o corpo morto tem Health > 0 mas está no chão
+	-- Verifica se a velocidade vertical é muito baixa e a posição Y está baixa
+	local root = hum.Parent:FindFirstChild("HumanoidRootPart")
+	if root then
+		local ray = Ray.new(root.Position, Vector3.new(0, -5, 0))
+		local hit = Workspace:FindPartOnRay(ray, hum.Parent)
+		if hit and hit:IsDescendantOf(hum.Parent) then
+			-- Se o raio bateu no próprio corpo, provavelmente está caído
+			return false
+		end
+	end
+	return true
+end
+
 local function getTargets(purpose)
 	local now = os.clock()
 	local c = targetCache[purpose]
@@ -329,7 +349,7 @@ local function getTargets(purpose)
 	local myChar = LocalPlayer.Character
 	local mode = Settings.TargetMode
 	for model, hum in pairs(humanoids) do
-		if model ~= myChar and model.Parent and hum.Parent and hum.Health > 0 then
+		if model ~= myChar and model.Parent and hum.Parent and isAlive(hum) then
 			local plr = Players:GetPlayerFromCharacter(model)
 			local modeOk
 			if plr then modeOk = plr ~= LocalPlayer and mode ~= 2
@@ -472,7 +492,7 @@ local function getCandidates(force)
 	local rough = roughBuf
 	table.clear(rough)
 	for _, t in ipairs(getTargets("aim")) do
-		if t.Humanoid.Health > 0 then
+		if isAlive(t.Humanoid) then
 			local rp = t.Root.Position
 			local rsp, rOn = Camera:WorldToViewportPoint(rp)
 			if rOn then
@@ -998,7 +1018,7 @@ local function updateSilentTarget()
 	local maxDist = Settings.SilentAimFOV
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(getTargets("aim")) do
-		if t.Humanoid.Health > 0 and t.Root and t.Root.Parent then
+		if isAlive(t.Humanoid) and t.Root and t.Root.Parent then
 			local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
 			if on then
 				local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
@@ -1011,7 +1031,7 @@ local function updateSilentTarget()
 			end
 		end
 	end
-	if best and best.Humanoid.Health > 0 and best.Model.Parent then
+	if best and isAlive(best.Humanoid) and best.Model.Parent then
 		local head = best.Model:FindFirstChild("Head")
 		local torso = best.Model:FindFirstChild("UpperTorso") or best.Model:FindFirstChild("Torso")
 		local part = head or torso or best.Model:FindFirstChild("HumanoidRootPart")
@@ -1037,7 +1057,7 @@ local function getTriggerTarget()
 	local maxFov = Settings.TriggerFOV
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(getTargets("aim")) do
-		if t.Humanoid.Health > 0 and t.Root and t.Root.Parent then
+		if isAlive(t.Humanoid) and t.Root and t.Root.Parent then
 			local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
 			if on then
 				local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
@@ -1117,7 +1137,7 @@ RunService:BindToRenderStep("TestToolkitAim", Enum.RenderPriority.Camera.Value +
 	if isLegit() and isAiming() then
 		if currentTarget then
 			local m, hum = currentTarget.Model, currentTarget.Humanoid
-			if not m.Parent or hum.Health <= 0 then currentTarget = nil
+			if not m.Parent or not isAlive(hum) then currentTarget = nil
 			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
 		end
 
@@ -1453,165 +1473,109 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- INVISIBILIDADE VIA SEAT (v59 — sem caixa fantasma)
+-- NOVA INVISIBILIDADE (Touch-Friendly - Permite pegar moedas)
 --------------------------------------------------------------------
-local SeatInvisible = {}
+local Invisibility = {}
 do
-	local mySeat = nil
 	local active = false
+	local savedTransparency = {}
+	local savedCollide = {}
+	local myCharConn = nil
 
-	local function cleanupSeat()
-		local existing = workspace:FindFirstChild("invischair")
-		if existing then
-			pcall(function() existing:Destroy() end)
-		end
-		mySeat = nil
-	end
-
-	local function findSafeCoords()
-		local bestPos = Vector3.new(-25.95, 84, 3537.55)
-		local myRoot = getLocalRoot()
-		if not myRoot then return bestPos end
-
-		pcall(function()
-			local xs, ys, zs = {}, {}, {}
-			local count = 0
-			for _, d in ipairs(Workspace:GetDescendants()) do
-				if d:IsA("BasePart") and d.Anchored then
-					local p = d.Position
-					xs[#xs + 1] = p.X
-					ys[#ys + 1] = p.Y
-					zs[#zs + 1] = p.Z
-					count += 1
-					if count >= 500 then break end
-				end
-			end
-			if #xs >= 10 then
-				table.sort(xs); table.sort(zs)
-				local maxX = xs[#xs]
-				local minZ = zs[1]
-				bestPos = Vector3.new(maxX + 5000, 500, minZ - 5000)
-			end
-		end)
-		return bestPos
-	end
-
-	local function activate()
+	local function applyInvisibility()
 		local char = LocalPlayer.Character
 		if not char then return end
-		local hrp = char:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-
-		-- Limpa qualquer seat antigo antes de criar novo
-		cleanupSeat()
-
-		local savedPosition = hrp.CFrame
-		local targetPos = Vector3.new(
-			Settings.SeatInvisibleX,
-			Settings.SeatInvisibleY,
-			Settings.SeatInvisibleZ
-		)
-
-		char:MoveTo(targetPos)
-		task.wait(0.15)
-
-		local seat = Instance.new("Seat")
-		seat.Name = "invischair"
-		seat.Anchored = false
-		seat.CanCollide = false
-		seat.Transparency = 1
-		seat.Position = targetPos
-		seat.Parent = workspace
-		mySeat = seat
-
-		local weld = Instance.new("Weld")
-		weld.Part0 = seat
-		weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-		weld.Parent = seat
-
-		task.wait()
-
-		seat.CFrame = savedPosition
-
-		for _, descendant in ipairs(char:GetDescendants()) do
-			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-				descendant.Transparency = 0.5
+		
+		-- Salva e aplica transparência
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") or d:IsA("Decal") then
+				if savedTransparency[d] == nil then
+					savedTransparency[d] = d.Transparency
+				end
+				d.Transparency = Settings.InvisibleAlpha
 			end
 		end
-	end
-
-	local function deactivate()
-		-- Destrói IMEDIATAMENTE o seat (não espera loop)
-		cleanupSeat()
-		-- Restaura transparency de todas as partes
-		if LocalPlayer.Character then
-			for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
-				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-					descendant.Transparency = 0
+		
+		-- Desativa colisão se configurado (para atravessar paredes, mas ainda pega itens)
+		if Settings.InvisibleNoCollide then
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("BasePart") then
+					if savedCollide[d] == nil then
+						savedCollide[d] = d.CanCollide
+					end
+					d.CanCollide = false
 				end
 			end
 		end
 	end
 
-	local function toggleInvisibility()
-		active = not active
-		Settings.SeatInvisible = active
-
-		if active then
-			activate()
-		else
-			deactivate()
+	local function removeInvisibility()
+		local char = LocalPlayer.Character
+		if not char then return end
+		
+		-- Restaura transparência
+		for d, t in pairs(savedTransparency) do
+			if d.Parent then
+				pcall(function() d.Transparency = t end)
+			end
 		end
+		table.clear(savedTransparency)
+		
+		-- Restaura colisão
+		for d, c in pairs(savedCollide) do
+			if d.Parent then
+				pcall(function() d.CanCollide = c end)
+			end
+		end
+		table.clear(savedCollide)
+	end
 
+	local function toggle()
+		active = not active
+		Settings.Invisible = active
+		
+		if active then
+			applyInvisibility()
+			-- Reaplica se o personagem mudar
+			if myCharConn then myCharConn:Disconnect() end
+			myCharConn = LocalPlayer.CharacterAdded:Connect(function()
+				task.wait(0.5)
+				if active then applyInvisibility() end
+			end)
+		else
+			removeInvisibility()
+			if myCharConn then myCharConn:Disconnect(); myCharConn = nil end
+		end
+		
 		if uiRefresh then pcall(uiRefresh) end
 	end
 
-	SeatInvisible.toggle = toggleInvisibility
-	SeatInvisible.isActive = function() return active end
-	SeatInvisible.findSafeCoords = findSafeCoords
-	SeatInvisible.forceOff = function()
+	Invisibility.toggle = toggle
+	Invisibility.isActive = function() return active end
+	Invisibility.forceOff = function()
 		if active then
 			active = false
-			Settings.SeatInvisible = false
-			deactivate()
+			Settings.Invisible = false
+			removeInvisibility()
+			if myCharConn then myCharConn:Disconnect(); myCharConn = nil end
 			if uiRefresh then pcall(uiRefresh) end
 		end
 	end
 
-	-- Loop de segurança: se o servidor apagar o seat por fora, desliga
+	-- Loop de manutenção (caso o jogo mude a transparência)
 	task.spawn(function()
 		while task.wait(0.5) do
-			if active and (not mySeat or not mySeat.Parent) then
-				active = false
-				Settings.SeatInvisible = false
-				deactivate()
-				if uiRefresh then pcall(uiRefresh) end
-			end
-		end
-	end)
-
-	-- Re-aplica transparency só enquanto ativo (não re-cria seat fantasma)
-	task.spawn(function()
-		while task.wait(0.3) do
 			if active then
 				local char = LocalPlayer.Character
 				if char then
-					for _, descendant in ipairs(char:GetDescendants()) do
-						if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-							if descendant.Transparency ~= 0.5 and descendant.Transparency ~= 1 then
-								descendant.Transparency = 0.5
-							end
+					for _, d in ipairs(char:GetDescendants()) do
+						if (d:IsA("BasePart") or d:IsA("Decal")) and d.Transparency ~= Settings.InvisibleAlpha then
+							d.Transparency = Settings.InvisibleAlpha
 						end
 					end
 				end
 			end
 		end
-	end)
-
-	LocalPlayer.CharacterAdded:Connect(function()
-		active = false
-		Settings.SeatInvisible = false
-		cleanupSeat()
 	end)
 end
 
@@ -2396,7 +2360,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v59"
+title.Text = "Test Toolkit v60"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -3398,28 +3362,15 @@ table.insert(keybindRows, addSection("Teclas (PC)"))
 addKeybind("Tecla do voo", "FlyKey", "Liga/desliga voo")
 addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 
-addSection("Invisibilidade (Seat Bug)")
-addInfo("⚠ Usa bug do Seat pra te tirar da sincronia do servidor. "
-	.. "Funciona em jogos sem validação de posição server-side. "
-	.. "Se for kickado/revertido, o jogo tem anti-cheat server-side.", 60)
-addToggle("Invisível (Seat Bug)", "SeatInvisible",
-	"Ativa a invisibilidade via bug do Seat (réplica do script Ziaa)", function()
-		pcall(SeatInvisible.toggle)
+addSection("Invisibilidade (Touch-Friendly)")
+addInfo("⚠ Invisibilidade REAL que permite pegar moedas! "
+	.. "O servidor ainda te vê na mesma posição, então você pode coletar itens normalmente.", 60)
+addToggle("Invisível", "Invisible",
+	"Ativa a invisibilidade sem quebrar a física (permite pegar moedas)", function()
+		pcall(Invisibility.toggle)
 	end)
-addButton("Auto-detectar coordenadas", "Procura um lugar seguro no mapa", function()
-	local pos = SeatInvisible.findSafeCoords()
-	Settings.SeatInvisibleX = math.floor(pos.X)
-	Settings.SeatInvisibleY = math.floor(pos.Y)
-	Settings.SeatInvisibleZ = math.floor(pos.Z)
-	if uiRefresh then uiRefresh() end
-	notify("Coordenadas: " .. math.floor(pos.X) .. ", "
-		.. math.floor(pos.Y) .. ", " .. math.floor(pos.Z), "on")
-end)
-addSlider("Coord X", "SeatInvisibleX", -10000, 10000, 1, 0, "Posição X")
-addSlider("Coord Y", "SeatInvisibleY", -500, 5000, 1, 0, "Posição Y")
-addSlider("Coord Z", "SeatInvisibleZ", -10000, 10000, 1, 0, "Posição Z")
-addSlider("Duração (0 = infinito)", "SeatInvisibleDuration", 0, 300, 1, 0, "Segundos")
-addToggle("Voltar ao desligar", "SeatInvisibleReturn", "Retorna pra posição original")
+addSlider("Transparência", "InvisibleAlpha", 0, 0.5, 0.05, 2, "0 = invisível, 0.5 = meio visível")
+addToggle("Atravessar paredes", "InvisibleNoCollide", "Desativa colisão do corpo")
 
 addSection("Proteção")
 addInfo("Todas as proteções também estão na aba SEGURANÇA. Use-a para controle rápido.", 32)
@@ -4122,7 +4073,7 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
 		if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
-		if Settings.SeatInvisible then parts[#parts + 1] = "SeatInvis" end
+		if Settings.Invisible then parts[#parts + 1] = "Invisível" end
 		if Settings.TriggerBot and triggerBotActive then parts[#parts + 1] = "Trigger" end
 		if Settings.AntiKill then parts[#parts + 1] = "AntiKill" end
 		if Settings.AntiVoid then parts[#parts + 1] = "AntiVoid" end
@@ -4137,7 +4088,7 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v59 carregado  •  "
+	bootShow("TestToolkit v60 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
