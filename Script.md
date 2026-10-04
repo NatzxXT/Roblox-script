@@ -1,10 +1,10 @@
 --[[
-    TestToolkit v59 - LocalScript (100% cliente)
+    TestToolkit v59.3 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v59.1:
+    v59.3:
       - Corrigido: ESP e Aimbot não pegam mais corpos mortos/caídos
-      - Corrigido: Invisibilidade (Seat Bug) agora permite pegar moedas
+      - Seat Invisibility RESTAURADO ao original (invisível para outros players)
 ]]
 
 local Players = game:GetService("Players")
@@ -60,7 +60,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v59.1 carregando...")
+bootShow("TestToolkit v59.3 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -107,7 +107,7 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
 
-	-- SEAT INVISIBILITY
+	-- SEAT INVISIBILITY (ORIGINAL)
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
 	SeatInvisibleY = 84,
@@ -323,7 +323,6 @@ local function isAlive(hum)
 	if state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Physics then
 		return false
 	end
-	-- Verifica se o corpo está caído no chão (evita mirar em cadáveres)
 	local root = hum.Parent:FindFirstChild("HumanoidRootPart")
 	if root then
 		local ray = Ray.new(root.Position, Vector3.new(0, -5, 0))
@@ -1472,7 +1471,7 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- INVISIBILIDADE VIA SEAT (CORRIGIDA - PERMITE PEGAR MOEDAS)
+-- INVISIBILIDADE VIA SEAT (ORIGINAL - v59)
 --------------------------------------------------------------------
 local SeatInvisible = {}
 do
@@ -1521,32 +1520,52 @@ do
 		local hrp = char:FindFirstChild("HumanoidRootPart")
 		if not hrp then return end
 
+		-- Limpa qualquer seat antigo antes de criar novo
 		cleanupSeat()
 
-		-- Apenas esconde o personagem e desativa colisão, SEM teletransportar ou soldar
+		local savedPosition = hrp.CFrame
+		local targetPos = Vector3.new(
+			Settings.SeatInvisibleX,
+			Settings.SeatInvisibleY,
+			Settings.SeatInvisibleZ
+		)
+
+		char:MoveTo(targetPos)
+		task.wait(0.15)
+
+		local seat = Instance.new("Seat")
+		seat.Name = "invischair"
+		seat.Anchored = false
+		seat.CanCollide = false
+		seat.Transparency = 1
+		seat.Position = targetPos
+		seat.Parent = workspace
+		mySeat = seat
+
+		local weld = Instance.new("Weld")
+		weld.Part0 = seat
+		weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+		weld.Parent = seat
+
+		task.wait()
+
+		seat.CFrame = savedPosition
+
 		for _, descendant in ipairs(char:GetDescendants()) do
 			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
 				descendant.Transparency = 0.5
 			end
 		end
-		
-		-- Desativa colisão para não ser empurrado, mas mantém a posição
-		for _, descendant in ipairs(char:GetDescendants()) do
-			if descendant:IsA("BasePart") then
-				descendant.CanCollide = false
-			end
-		end
 	end
 
 	local function deactivate()
+		-- Destrói IMEDIATAMENTE o seat (não espera loop)
 		cleanupSeat()
+		-- Restaura transparency de todas as partes
 		if LocalPlayer.Character then
 			for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
 				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
 					descendant.Transparency = 0
-				end
-				if descendant:IsA("BasePart") then
-					descendant.CanCollide = true
 				end
 			end
 		end
@@ -1577,10 +1596,10 @@ do
 		end
 	end
 
-	-- Loop de segurança: se o personagem mudar, desliga
+	-- Loop de segurança: se o servidor apagar o seat por fora, desliga
 	task.spawn(function()
 		while task.wait(0.5) do
-			if active and (not LocalPlayer.Character or not LocalPlayer.Character.Parent) then
+			if active and (not mySeat or not mySeat.Parent) then
 				active = false
 				Settings.SeatInvisible = false
 				deactivate()
@@ -1589,7 +1608,7 @@ do
 		end
 	end)
 
-	-- Re-aplica transparência enquanto ativo
+	-- Re-aplica transparency só enquanto ativo (não re-cria seat fantasma)
 	task.spawn(function()
 		while task.wait(0.3) do
 			if active then
@@ -2395,7 +2414,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v59.1"
+title.Text = "Test Toolkit v59.3"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -4136,7 +4155,7 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v59.1 carregado  •  "
+	bootShow("TestToolkit v59.3 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
