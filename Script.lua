@@ -1,7 +1,8 @@
 --[[
-    TestToolkit v97.1
-    - Trigger bot (qualquer parte do corpo, delay 0, team check)
-    - Aimbot (câmera lock) com FOV, smooth, LOS e team check
+    TestToolkit v97.2
+    - Trigger bot (qualquer parte do corpo, delay 0)
+    - Aimbot (câmera lock) com FOV, smooth, LOS
+    - Team check aprimorado (cache + Neutral + amigos + forcefield)
     - ESP apenas Highlight (sem barra de vida)
     - Mouse fix: não trava cursor ao fechar o menu
     - Fling Bots + Fling Player Safe + K1LAS1K
@@ -39,6 +40,8 @@ local Settings = {
 	TriggerBot = false, TriggerBotAlways = false,
 	TriggerFOV = 60, TriggerVisible = true, TriggerDelay = 0,
 	TriggerKey = Enum.KeyCode.Q,
+
+	IgnoreFriends = false, IgnoreForcefield = false,
 
 	AimBot = false, AimBotAlways = false, AimBotVisible = true,
 	AimBotFOV = 80, AimBotSmooth = 0.45, AimBotPart = 1,
@@ -119,20 +122,87 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.1 carregando...")
+bootShow("TestToolkit v97.2 carregando...")
 
 --------------------------------------------------------------------
--- TEAM CHECK
+-- TEAM CHECK (aprimorado)
 --------------------------------------------------------------------
+local teamCache = setmetatable({}, { __mode = "k" })
+
+local function refreshPlayerCache(plr)
+	if not plr then return end
+	local info = {
+		team = plr.Team,
+		neutral = plr.Neutral,
+		color = plr.TeamColor,
+		isFriend = false,
+	}
+	if plr ~= LocalPlayer then
+		pcall(function()
+			if LocalPlayer.IsFriendsWith then
+				info.isFriend = LocalPlayer:IsFriendsWith(plr.UserId)
+			end
+		end)
+	end
+	teamCache[plr] = info
+end
+
+local function getInfo(plr)
+	local c = teamCache[plr]
+	if not c then
+		refreshPlayerCache(plr)
+		c = teamCache[plr]
+	end
+	return c or { team = nil, neutral = false, color = nil, isFriend = false }
+end
+
+local function hookPlayer(plr)
+	plr:GetPropertyChangedSignal("Team"):Connect(function() refreshPlayerCache(plr) end)
+	plr:GetPropertyChangedSignal("Neutral"):Connect(function() refreshPlayerCache(plr) end)
+	plr:GetPropertyChangedSignal("TeamColor"):Connect(function() refreshPlayerCache(plr) end)
+	task.spawn(refreshPlayerCache, plr)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do hookPlayer(plr) end
+Players.PlayerAdded:Connect(hookPlayer)
+Players.PlayerRemoving:Connect(function(plr) teamCache[plr] = nil end)
+
 local function isEnemy(model, plr)
+	-- NPC / bot sem Player
 	if not plr then return true end
 	if plr == LocalPlayer then return false end
-	local myTeam = LocalPlayer.Team
-	local otherTeam = plr.Team
-	if not myTeam or not otherTeam then return true end
-	if myTeam == otherTeam then return false end
+
+	local info = getInfo(plr)
+
+	-- Amigo (opcional)
+	if Settings.IgnoreFriends and info.isFriend then
+		return false
+	end
+
+	-- Spawn protection / forcefield (opcional)
+	if Settings.IgnoreForcefield then
+		local char = plr.Character
+		if char and char:FindFirstChildOfClass("ForceField") then
+			return false
+		end
+	end
+
+	-- Neutral flag (Roblox: neutral = não aliado = inimigo em modo time)
+	if info.neutral then
+		return true
+	end
+
+	local myInfo = getInfo(LocalPlayer)
+
+	-- Ambos têm time → compara
+	if myInfo.team and info.team then
+		return myInfo.team ~= info.team
+	end
+
+	-- Sem sistema de time no jogo → FFA → todos inimigos
 	return true
 end
+
 local function isTeammate(model, plr) return not isEnemy(model, plr) end
 
 --------------------------------------------------------------------
@@ -297,7 +367,7 @@ local function getBodyParts(model)
 	return parts
 end
 
--- Team check explícito (além do getTargets)
+-- Team check explícito (redundância — getTargets já filtra)
 local function isEnemyTarget(t)
 	if not t then return false end
 	if not t.Player then return true end
@@ -1798,7 +1868,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.1"
+title.Text = "Test Toolkit v97.2"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2357,6 +2427,9 @@ addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
 addSlider("Delay", "TriggerDelay", 0, 1, 0.01, 2, "0 = sem delay")
 addSection("Alvos")
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
+addSection("Team Check")
+addToggle("Ignorar amigos", "IgnoreFriends", "Não mira em amigos")
+addToggle("Ignorar forcefield", "IgnoreForcefield", "Pula spawn protection")
 addSection("Tecla (PC)")
 addKeybind("Tecla do Trigger", "TriggerKey", "Segura para ativar")
 
@@ -2369,6 +2442,9 @@ addToggle("Mostrar FOV", "AimBotShowFOV", "Círculo verde/vermelho")
 addCycle("Parte do corpo", "AimBotPart", { "Cabeça", "Torso", "Mais perto" }, "Onde mirar")
 addSlider("FOV do aim", "AimBotFOV", 10, 400, 1, 0, "Raio em pixels")
 addSlider("Suavidade", "AimBotSmooth", 0.05, 1, 0.05, 2, "1 = instantâneo")
+addSection("Team Check")
+addToggle("Ignorar amigos", "IgnoreFriends", "Não mira em amigos")
+addToggle("Ignorar forcefield", "IgnoreForcefield", "Pula spawn protection")
 addSection("Tecla (PC)")
 addKeybind("Tecla do aim", "AimBotKey", "Segura para mirar")
 
@@ -2596,9 +2672,7 @@ local function baseScale()
 	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
 end
 
--- ============================================================
 -- MOUSE FIX: não salva/restaura MouseBehavior (evita travar cursor)
--- ============================================================
 local function setMenu(open)
 	menuOpen = open
 	local s = baseScale()
@@ -2607,7 +2681,6 @@ local function setMenu(open)
 		menuScale.Scale = s * 0.94
 		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
 		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
-		-- Só força cursor visível enquanto o menu está aberto
 		pcall(function()
 			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 			UserInputService.MouseIconEnabled = true
@@ -2616,7 +2689,6 @@ local function setMenu(open)
 		tween(menu, { GroupTransparency = 1 }, 0.16)
 		tween(menuScale, { Scale = s * 0.94 }, 0.16)
 		task.delay(0.18, function() if not menuOpen then menu.Visible = false end end)
-		-- NÃO restaura MouseBehavior — deixa o jogo retomar o controle sozinho.
 	end
 end
 _G.TT_setMenu = setMenu
@@ -2652,9 +2724,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.1 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.2 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.1 carregado com sucesso!")
+	print("[TestToolkit] v97.2 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
