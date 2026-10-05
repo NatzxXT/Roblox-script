@@ -1,13 +1,20 @@
 --[[
-    TestToolkit v62 - LocalScript (100% cliente)
+    TestToolkit v64 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v62:
-      - Grab Gun Dropped virou BOTÃO (não toggle)
-      - Nome do Murder sempre aparece (prioridade máxima)
-      - Aimbot MM2 com detecção AGRESSIVA + histórico + fallback
-      - Forçar função manual
-      - Grab Gun + Auto Grab (só Inocente)
+    v64:
+      - MM2 CORE adaptado do Mario Hub (xDTaraZ)
+      - Detecção de role via RemoteFunction (GetCurrentPlayerData)
+      - ESP estilo Mario Hub (Highlight + BillboardGui com cores exatas)
+      - Auto Shoot Murderer (via gun.Shoot:FireServer)
+      - Kill All / Kill Aura (via events.KnifeStabbed / HandleTouched)
+      - Knife Throw Aim + Silent Aim (via hook namecall)
+      - Auto Grab Gun (via firetouchinterest)
+      - Auto Win (Kaitun) - joga a rodada por você
+      - Auto Dodge
+      - Coin Farm completo (LinearVelocity + CoinContainer + Bag tracking)
+      - Fling Player universal (funciona em qualquer jogo)
+      - Nossa UI original mantida
 ]]
 
 local Players = game:GetService("Players")
@@ -18,6 +25,9 @@ local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local HttpService = game:GetService("HttpService")
 local PhysicsService = game:GetService("PhysicsService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -26,22 +36,18 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 end)
 
 --------------------------------------------------------------------
--- DETECÇÃO DE JOGO (MM2)
+-- DETECÇÃO MM2
 --------------------------------------------------------------------
 local MM2_PLACE_IDS = {
-	[142823291] = true,
-	[12278902] = true,
-	[10231138] = true,
+	[142823291] = true, [12278902] = true, [10231138] = true, [66654135] = true,
 }
-
 local GAME_NAME = ""
-local IS_MM2 = false
 pcall(function()
 	GAME_NAME = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
 end)
-if MM2_PLACE_IDS[game.PlaceId] then IS_MM2 = true end
-if string.find(string.lower(GAME_NAME), "murder mystery") then IS_MM2 = true end
-if string.find(string.lower(game.Name), "murder mystery") then IS_MM2 = true end
+local IS_MM2 = MM2_PLACE_IDS[game.PlaceId]
+	or string.find(string.lower(GAME_NAME), "murder mystery") ~= nil
+	or string.find(string.lower(game.Name), "murder mystery") ~= nil
 
 --------------------------------------------------------------------
 -- BOOT
@@ -81,7 +87,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v62 carregando...")
+bootShow("TestToolkit v64 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -131,16 +137,20 @@ local Settings = {
 	-- MM2
 	MM2Mode = true,
 	MM2SmartAim = true,
-	MM2ForceRole = 0,
-	MM2ShowDebug = false,
-	MM2InnocentColor = Color3.fromRGB(0, 255, 0),
-	MM2MurderColor = Color3.fromRGB(255, 0, 0),
-	MM2SheriffColor = Color3.fromRGB(0, 100, 255),
-	MM2ShowDroppedGun = true,
-	MM2DroppedGunColor = Color3.fromRGB(255, 255, 0),
+	MM2EspPlayers = false,
+	MM2EspGun = false,
+	MM2RoleNotify = false,
+	MM2SilentAim = false,
+	MM2AutoShootMurderer = false,
 	MM2AutoGrabGun = false,
-	MM2GrabRange = 200,
-	MM2AlwaysShowMurderName = true,
+	MM2AutoKillAll = false,
+	MM2KillAura = false,
+	MM2KnifeThrownAim = false,
+	MM2AutoWin = false,
+	MM2AutoDodge = false,
+	CoinFarmEnabled = false,
+	CoinFarmSpeed = 25,
+	CoinFarmResetWhenFull = false,
 
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
@@ -152,6 +162,7 @@ local Settings = {
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000, FlingMode = 1, FlingMode2 = 2,
 	FlingBots = true, FlingPlayers = false, FlingRepeat = 0.1,
+	FlingPlayerMode = 1, FlingPlayerRange = 50,
 
 	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1, DeviceMode = 1,
@@ -174,8 +185,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, PerfMode = true, FPSUnlock = true, MobileEdit = true,
 	HUDEdit = true, Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true, MM2Mode = true, MM2AutoGrabGun = true,
-	MM2ForceRole = true,
+	SeatInvisible = true, MM2Mode = true,
 }
 
 local function serializeSettings()
@@ -316,189 +326,605 @@ local function isTeammate(model, plr)
 end
 
 --------------------------------------------------------------------
--- MM2 DETECÇÃO DE FUNÇÃO (AGRESSIVA + HISTÓRICO)
+-- MM2 CORE (adaptado do Mario Hub)
 --------------------------------------------------------------------
-local MM2 = {}
+local MM2Cfg = {
+	ShootStands = { Vector3.new(0,0,6), Vector3.new(0,0,-6), Vector3.new(6,0,0), Vector3.new(-6,0,0), Vector3.new(0,6,3) },
+	ShootAttempts = 3,
+	ShootConfirm = 0.8,
+	ShootSettle = 0.25,
+	ShootReturn = 0.3,
+	ShootCooldown = 1.2,
+	StabCooldown = 0.9,
+	BusyTimeout = 6,
+	StabOffset = 2,
+	KillAuraRange = 18,
+	GunGrabHold = 0.35,
+	FarmArrive = 1.5,
+	FarmBrake = 20,
+	FarmGroundLift = 4,
+	FarmGroundReach = 400,
+	FarmIdleWait = 0.3,
+	FarmSettle = 0.15,
+	FarmSkipTime = 4,
+	FarmMurdererRadius = 30,
+	DodgeRange = 22,
+	DodgeCooldown = 2.5,
+	VictimPriority = { Sheriff=1, Hero=1, Innocent=2, Murderer=99 },
+	FlingForce = 9e4,
+	FlingTime = 2.5,
+	LobbyName = "RegularLobby",
+	Colors = {
+		Murderer = Color3.fromHSV(0, 0.75, 1),
+		Sheriff = Color3.fromHSV(0.6, 0.7, 1),
+		Hero = Color3.fromHSV(0.14, 0.8, 1),
+		Innocent = Color3.fromHSV(0.33, 0.6, 0.95),
+		Gun = Color3.fromHSV(0.12, 0.9, 1),
+		Coin = Color3.fromHSV(0.15, 0.6, 1),
+	},
+}
+
+local MM2State = {
+	Alive = true,
+	Conns = {},
+	Roles = {},
+	LastRoleFetch = 0,
+	LastShoot = 0,
+	LastStab = 0,
+	ActionBusy = false,
+	BusySince = 0,
+	ShootBusy = false,
+	KillBusy = false,
+	LastDodge = 0,
+	FarmBusy = false,
+	FarmHome = nil,
+	FarmMover = nil,
+	Bag = { Current = 0, Max = 0 },
+	SkippedCoins = {},
+	NoclipConn = nil,
+	NoclipSaved = {},
+	StickTarget = nil,
+	Esp = { Players = {}, Gun = nil, Folder = nil },
+	FlingBusy = false,
+}
+
+local MM2Lib = {}
+local MM2GameLib = {}
+
 do
-	local roleCache = setmetatable({}, { __mode = "k" })
-	local persistent = setmetatable({}, { __mode = "k" })
-	local myRoleCache = { v = nil, t = 0 }
-	local dropCache = setmetatable({}, { __mode = "k" })
-	local dropAt = 0
-	local dropped = {}
-
-	local function isMurderTool(tool)
-		if not tool or not tool:IsA("Tool") then return false end
-		local n = string.lower(tool.Name)
-		if string.find(n, "knife") then return true end
-		if string.find(n, "faca") then return true end
-		if string.find(n, "dagger") then return true end
-		if string.find(n, "blade") then return true end
-		return false
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+	local gameplay = remotes and remotes:WaitForChild("Gameplay", 10)
+	local extras = remotes and remotes:FindFirstChild("Extras")
+	local function Remote(folder, name, class)
+		local remote = folder and folder:FindFirstChild(name)
+		remote = remote or ReplicatedStorage:FindFirstChild(name, true)
+		return remote and remote:IsA(class) and remote or nil
 	end
+	MM2GameLib.PlayerData = Remote(gameplay, "GetCurrentPlayerData", "RemoteFunction")
+	MM2GameLib.CoinCollected = Remote(gameplay, "CoinCollected", "BaseRemoteEvent")
+	MM2GameLib.CoinsStarted = Remote(gameplay, "CoinsStarted", "BaseRemoteEvent")
+	MM2GameLib.RoundStart = Remote(gameplay, "RoundStart", "BaseRemoteEvent")
+	MM2GameLib.RedeemCode = Remote(extras, "RedeemCode", "RemoteFunction")
+end
 
-	local function isSheriffTool(tool)
-		if not tool or not tool:IsA("Tool") then return false end
-		local n = string.lower(tool.Name)
-		if string.find(n, "gun") then return true end
-		if string.find(n, "revolver") then return true end
-		if string.find(n, "pistol") then return true end
-		if string.find(n, "arma") then return true end
-		return false
+function MM2Lib.Root(player)
+	local character = (player or LocalPlayer).Character
+	return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+function MM2Lib.Humanoid(player)
+	local character = (player or LocalPlayer).Character
+	return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+function MM2Lib.Tool(player, name)
+	local character = player.Character
+	local backpack = player:FindFirstChild("Backpack")
+	return (character and character:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name))
+end
+
+function MM2Lib.IsDead(player)
+	local humanoid = MM2Lib.Humanoid(player)
+	return not humanoid or humanoid.Health <= 0
+end
+
+function MM2Lib.Busy()
+	return MM2State.ActionBusy and os.clock() - MM2State.BusySince < MM2Cfg.BusyTimeout
+end
+
+function MM2Lib.SetBusy(busy)
+	MM2State.ActionBusy = busy
+	MM2State.BusySince = os.clock()
+end
+
+function MM2Lib.Connect(signal, fn)
+	local conn = signal:Connect(fn)
+	table.insert(MM2State.Conns, conn)
+	return conn
+end
+
+function MM2Lib.WarpAndReturn(targetCFrame, action)
+	local root = MM2Lib.Root()
+	if not root or not targetCFrame or MM2Lib.Busy() then return false end
+	MM2Lib.SetBusy(true)
+	local home = root.CFrame
+	local ok = pcall(function()
+		root.CFrame = targetCFrame
+		root.AssemblyLinearVelocity = Vector3.zero
+		action()
+	end)
+	local current = MM2Lib.Root()
+	if current then current.CFrame = home end
+	MM2Lib.SetBusy(false)
+	return ok
+end
+
+function MM2Lib.RefreshRoles(force)
+	if not force and os.clock() - MM2State.LastRoleFetch < 1 then return end
+	MM2State.LastRoleFetch = os.clock()
+	if not MM2GameLib.PlayerData then return end
+	local ok, roster = pcall(MM2GameLib.PlayerData.InvokeServer, MM2GameLib.PlayerData)
+	if ok and type(roster) == "table" then
+		MM2State.Roles = roster
 	end
+end
 
-	local function hasTool(model, plr, checkFn)
-		if model then
-			for _, tool in ipairs(model:GetChildren()) do
-				if checkFn(tool) then return true end
-			end
+function MM2Lib.RoleOf(player)
+	local entry = MM2State.Roles[player.Name]
+	if entry and not entry.Dead and entry.Role then return entry.Role end
+	if MM2Lib.Tool(player, "Knife") then return "Murderer" end
+	if MM2Lib.Tool(player, "Gun") then return "Sheriff" end
+	return entry and entry.Dead and "Dead" or "Innocent"
+end
+
+function MM2Lib.FindByRole(role)
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and MM2Lib.RoleOf(player) == role and MM2Lib.Root(player) then
+			return player
 		end
-		if plr then
-			local backpack = plr:FindFirstChild("Backpack")
-			if backpack then
-				for _, tool in ipairs(backpack:GetChildren()) do
-					if checkFn(tool) then return true end
-				end
-			end
-			local starterGear = plr:FindFirstChild("StarterGear")
-			if starterGear then
-				for _, tool in ipairs(starterGear:GetChildren()) do
-					if checkFn(tool) then return true end
-				end
-			end
+	end
+	return nil
+end
+
+function MM2Lib.Map()
+	for _, child in ipairs(workspace:GetChildren()) do
+		if child.Name ~= MM2Cfg.LobbyName and child:IsA("Model") and child:FindFirstChild("CoinContainer") then
+			return child
 		end
-		return false
 	end
+	return nil
+end
 
-	function MM2.getRole(model, plr)
-		if not model and not plr then return nil end
-		local key = plr or model
-		local now = os.clock()
-		local c = roleCache[key]
-		if c and now - c.t < 0.4 then return c.v end
-		if not c then c = { v = nil, t = 0 }; roleCache[key] = c end
+function MM2Lib.Lobby()
+	local lobby = workspace:FindFirstChild(MM2Cfg.LobbyName)
+	if lobby then return lobby end
+	for _, child in ipairs(workspace:GetChildren()) do
+		if child:IsA("Model") and child.Name:find("Lobby") then return child end
+	end
+	return nil
+end
 
-		if persistent[key] then
-			c.v = persistent[key]
-			c.t = now
-			return c.v
+function MM2Lib.IAmPlaying()
+	local entry = MM2State.Roles[LocalPlayer.Name]
+	local humanoid = MM2Lib.Humanoid()
+	return MM2Lib.Map() ~= nil and humanoid ~= nil and humanoid.Health > 0
+		and entry ~= nil and not entry.Dead
+end
+
+function MM2Lib.GunDrop()
+	local map = MM2Lib.Map()
+	return (map and map:FindFirstChild("GunDrop", true)) or workspace:FindFirstChild("GunDrop")
+end
+
+--------------------------------------------------------------------
+-- SHERIFF
+--------------------------------------------------------------------
+local Sheriff = {}
+
+function Sheriff.Gun() return MM2Lib.Tool(LocalPlayer, "Gun") end
+
+function Sheriff.Equip(tool)
+	local humanoid = MM2Lib.Humanoid()
+	if humanoid and tool.Parent ~= LocalPlayer.Character then
+		humanoid:EquipTool(tool)
+	end
+end
+
+function Sheriff.ClearStand(target, targetRoot)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { LocalPlayer.Character, target.Character }
+	for _, offset in ipairs(MM2Cfg.ShootStands) do
+		local position = (targetRoot.CFrame * CFrame.new(offset)).Position
+		if not workspace:Raycast(position, targetRoot.Position - position, params) then
+			return CFrame.lookAt(position, targetRoot.Position)
 		end
-
-		local role = nil
-		if hasTool(model, plr, isMurderTool) then
-			role = "murder"
-			persistent[key] = "murder"
-		elseif hasTool(model, plr, isSheriffTool) then
-			role = "sheriff"
-			persistent[key] = "sheriff"
-		else
-			role = "innocent"
-		end
-
-		c.v = role
-		c.t = now
-		return role
 	end
+	return CFrame.lookAt((targetRoot.CFrame * CFrame.new(MM2Cfg.ShootStands[1])).Position, targetRoot.Position)
+end
 
-	function MM2.getMyRole()
-		if Settings.MM2ForceRole == 1 then return "innocent" end
-		if Settings.MM2ForceRole == 2 then return "murder" end
-		if Settings.MM2ForceRole == 3 then return "sheriff" end
+function Sheriff.ShootTarget(target)
+	local gun, targetRoot = Sheriff.Gun(), MM2Lib.Root(target)
+	if not gun or not targetRoot or os.clock() - MM2State.LastShoot < MM2Cfg.ShootCooldown then return false end
+	MM2State.LastShoot = os.clock()
+	Sheriff.Equip(gun)
+	return MM2Lib.WarpAndReturn(Sheriff.ClearStand(target, targetRoot), function()
+		task.wait(MM2Cfg.ShootSettle)
+		local root = MM2Lib.Root()
+		local attachment = root and root:FindFirstChild("GunRaycastAttachment")
+		local aimRoot = MM2Lib.Root(target) or targetRoot
+		gun.Shoot:FireServer(attachment and attachment.WorldCFrame or root.CFrame, aimRoot.CFrame)
+		task.wait(MM2Cfg.ShootReturn)
+	end)
+end
 
-		local now = os.clock()
-		if now - myRoleCache.t < 0.4 then return myRoleCache.v end
-		myRoleCache.t = now
-		local role = MM2.getRole(LocalPlayer.Character, LocalPlayer)
-		myRoleCache.v = role
-		return role
+function Sheriff.ShootMurderer()
+	MM2Lib.RefreshRoles(true)
+	local murderer = MM2Lib.FindByRole("Murderer")
+	if not murderer then return false, "No murderer found" end
+	for _ = 1, MM2Cfg.ShootAttempts do
+		if not Sheriff.Gun() then break end
+		Sheriff.ShootTarget(murderer)
+		task.wait(MM2Cfg.ShootConfirm)
+		if MM2Lib.IsDead(murderer) then return true, murderer.Name end
+		task.wait(math.max(0, MM2Cfg.ShootCooldown - MM2Cfg.ShootConfirm))
 	end
+	return false, murderer.Name .. " survived"
+end
 
-	function MM2.isValidTarget(model, plr)
-		if not IS_MM2 then return true end
-		if not Settings.MM2SmartAim then return true end
-
-		local myRole = MM2.getMyRole()
-		local theirRole = MM2.getRole(model, plr)
-
-		if not myRole then return true end
-
-		if myRole == "innocent" then
-			return theirRole == "murder"
-		elseif myRole == "murder" then
-			return true
-		elseif myRole == "sheriff" then
-			return theirRole == "murder"
-		end
-		return true
-	end
-
-	function MM2.clearCache()
-		table.clear(roleCache)
-		table.clear(persistent)
-		myRoleCache.v = nil
-		myRoleCache.t = 0
-	end
-
-	local function clearPersistOnDeath(plr)
-		persistent[plr] = nil
-		roleCache[plr] = nil
-		myRoleCache.v = nil
-		myRoleCache.t = 0
-	end
-
-	local function bindPlayer(plr)
-		if plr == LocalPlayer then
-			plr.CharacterAdded:Connect(function()
-				task.wait(1)
-				clearPersistOnDeath(plr)
+function Sheriff.GrabGun()
+	local drop = MM2Lib.GunDrop()
+	if not drop or Sheriff.Gun() or not MM2Lib.IAmPlaying() then return false end
+	local part = drop:IsA("BasePart") and drop or drop:FindFirstChildWhichIsA("BasePart", true)
+	if not part then return false end
+	return MM2Lib.WarpAndReturn(part.CFrame, function()
+		local root = MM2Lib.Root()
+		if root and firetouchinterest then
+			pcall(function()
+				firetouchinterest(root, part, 0)
+				firetouchinterest(root, part, 1)
 			end)
 		end
-		if plr.Character then
-			local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-			if hum then
-				hum.Died:Connect(function()
-					clearPersistOnDeath(plr)
-				end)
-			end
-		end
-		plr.CharacterAdded:Connect(function(char)
-			local hum = char:WaitForChild("Humanoid", 5)
-			if hum then
-				hum.Died:Connect(function()
-					clearPersistOnDeath(plr)
-				end)
-			end
-		end)
-	end
+		task.wait(MM2Cfg.GunGrabHold)
+	end)
+end
 
-	for _, plr in ipairs(Players:GetPlayers()) do bindPlayer(plr) end
-	Players.PlayerAdded:Connect(bindPlayer)
+function Sheriff.AutoShootStep()
+	if not Settings.MM2AutoShootMurderer or MM2State.ShootBusy then return end
+	if not Sheriff.Gun() or not MM2Lib.IAmPlaying() then return end
+	MM2State.ShootBusy = true
+	task.spawn(function()
+		pcall(Sheriff.ShootMurderer)
+		MM2State.ShootBusy = false
+	end)
+end
 
-	function MM2.getDroppedGuns()
-		local now = os.clock()
-		if now - dropAt < 0.3 then return dropped end
-		dropAt = now
-		table.clear(dropped)
-		table.clear(dropCache)
-		for _, d in ipairs(Workspace:GetChildren()) do
-			if d:IsA("Tool") then
-				local n = string.lower(d.Name)
-				if string.find(n, "gun") or string.find(n, "revolver")
-					or string.find(n, "knife") or string.find(n, "pistol") then
-					local handle = d:FindFirstChild("Handle")
-					if handle and handle:IsA("BasePart") then
-						dropped[#dropped + 1] = d
-						dropCache[d] = handle
-					end
-				end
-			end
-		end
-		return dropped
+function Sheriff.AutoGrabStep()
+	if Settings.MM2AutoGrabGun and MM2Lib.RoleOf(LocalPlayer) ~= "Murderer" and MM2Lib.GunDrop() then
+		task.spawn(function() pcall(Sheriff.GrabGun) end)
 	end
 end
 
 --------------------------------------------------------------------
--- TARGETS
+-- MURDERER
+--------------------------------------------------------------------
+local Murderer = {}
+
+function Murderer.Knife() return MM2Lib.Tool(LocalPlayer, "Knife") end
+
+function Murderer.Stab(target)
+	local knife, targetRoot = Murderer.Knife(), MM2Lib.Root(target)
+	if not knife or not targetRoot then return false end
+	Sheriff.Equip(knife)
+	local events = knife:FindFirstChild("Events")
+	if not events then return false end
+	local stand = targetRoot.CFrame * CFrame.new(0, 0, MM2Cfg.StabOffset)
+	return MM2Lib.WarpAndReturn(stand, function()
+		events.KnifeStabbed:FireServer()
+		task.wait()
+		local aimRoot = MM2Lib.Root(target) or targetRoot
+		events.HandleTouched:FireServer(aimRoot)
+		task.wait(MM2Cfg.StabCooldown)
+	end)
+end
+
+function Murderer.Victims()
+	local victims = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		local humanoid = MM2Lib.Humanoid(player)
+		local entry = MM2State.Roles[player.Name]
+		local inRound = entry == nil or not entry.Dead
+		if player ~= LocalPlayer and humanoid and humanoid.Health > 0 and inRound and MM2Lib.Root(player) then
+			table.insert(victims, player)
+		end
+	end
+	table.sort(victims, function(a, b)
+		return (MM2Cfg.VictimPriority[MM2Lib.RoleOf(a)] or 3) < (MM2Cfg.VictimPriority[MM2Lib.RoleOf(b)] or 3)
+	end)
+	return victims
+end
+
+function Murderer.KillAll()
+	if not Murderer.Knife() then return 0 end
+	local kills = 0
+	for _, victim in ipairs(Murderer.Victims()) do
+		if not MM2State.Alive or not Murderer.Knife() then break end
+		if Murderer.Stab(victim) then kills = kills + 1 end
+	end
+	return kills
+end
+
+function Murderer.AutoKillStep()
+	if not Settings.MM2AutoKillAll or MM2State.KillBusy then return end
+	if not Murderer.Knife() or not MM2Lib.IAmPlaying() then return end
+	MM2State.KillBusy = true
+	task.spawn(function()
+		pcall(Murderer.KillAll)
+		MM2State.KillBusy = false
+	end)
+end
+
+function Murderer.KillAuraStep()
+	local knife, root = Murderer.Knife(), MM2Lib.Root()
+	if not Settings.MM2KillAura or not knife or not root then return end
+	if os.clock() - MM2State.LastStab < MM2Cfg.StabCooldown then return end
+	local events = knife:FindFirstChild("Events")
+	for _, victim in ipairs(Murderer.Victims()) do
+		local victimRoot = MM2Lib.Root(victim)
+		if events and victimRoot and (victimRoot.Position - root.Position).Magnitude <= MM2Cfg.KillAuraRange then
+			MM2State.LastStab = os.clock()
+			Sheriff.Equip(knife)
+			events.KnifeStabbed:FireServer()
+			events.HandleTouched:FireServer(victimRoot)
+			return
+		end
+	end
+end
+
+function Murderer.NearestVictimRoot(origin)
+	local best, bestDistance
+	for _, victim in ipairs(Murderer.Victims()) do
+		local victimRoot = MM2Lib.Root(victim)
+		local distance = victimRoot and (victimRoot.Position - origin).Magnitude
+		if distance and (not bestDistance or distance < bestDistance) then
+			best, bestDistance = victimRoot, distance
+		end
+	end
+	return best
+end
+
+--------------------------------------------------------------------
+-- AIM HOOK (SilentAim + KnifeThrow)
+--------------------------------------------------------------------
+local MM2Hook = { Restore = nil }
+
+function MM2Hook.SyncAimHook()
+	local wanted = MM2State.Alive and (Settings.MM2SilentAim or Settings.MM2KnifeThrownAim)
+	if wanted and not MM2Hook.Restore then
+		pcall(function()
+			if not getrawmetatable or not setreadonly or not hookfunction then return end
+			local mt = getrawmetatable(game)
+			local oldNamecall = mt.__namecall
+			setreadonly(mt, false)
+			mt.__namecall = newcclosure(function(self, ...)
+				if not MM2State.Alive or getnamecallmethod() ~= "FireServer" or (checkcaller and checkcaller()) then
+					return oldNamecall(self, ...)
+				end
+				local parent = self.Parent
+				if Settings.MM2SilentAim and self.Name == "Shoot" and parent and parent.Name == "Gun" then
+					local murderer = MM2Lib.FindByRole("Murderer")
+					local murdererRoot = murderer and MM2Lib.Root(murderer)
+					if murdererRoot then
+						local origin = ...
+						return oldNamecall(self, origin, murdererRoot.CFrame)
+					end
+				elseif Settings.MM2KnifeThrownAim and self.Name == "KnifeThrown" and parent and parent.Name == "Events" then
+					local origin = ...
+					local victimRoot = Murderer.NearestVictimRoot(origin.Position)
+					if victimRoot then
+						return oldNamecall(self, origin, victimRoot.Position)
+					end
+				end
+				return oldNamecall(self, ...)
+			end)
+			setreadonly(mt, true)
+			MM2Hook.Restore = function()
+				pcall(function()
+					setreadonly(mt, false)
+					mt.__namecall = oldNamecall
+					setreadonly(mt, true)
+				end)
+			end
+		end)
+	elseif not wanted and MM2Hook.Restore then
+		local restore = MM2Hook.Restore
+		MM2Hook.Restore = nil
+		pcall(restore)
+	end
+end
+
+--------------------------------------------------------------------
+-- AUTO WIN (Kaitun)
+--------------------------------------------------------------------
+local function KaitunStep()
+	if not Settings.MM2AutoWin or not MM2Lib.IAmPlaying() then return end
+	if Murderer.Knife() then Settings.MM2AutoKillAll = true end
+	if Sheriff.Gun() then Settings.MM2AutoShootMurderer = true end
+	Settings.MM2AutoGrabGun = true
+	Settings.MM2AutoDodge = true
+	Settings.CoinFarmEnabled = true
+end
+
+--------------------------------------------------------------------
+-- AUTO DODGE
+--------------------------------------------------------------------
+local function DodgeStep()
+	local root = MM2Lib.Root()
+	local murderer = MM2Lib.FindByRole("Murderer")
+	local threat = murderer and MM2Lib.Root(murderer)
+	if not Settings.MM2AutoDodge or not root or not threat then return end
+	if Murderer.Knife() or MM2Lib.Busy() then return end
+	if os.clock() - MM2State.LastDodge < MM2Cfg.DodgeCooldown then return end
+	if (threat.Position - root.Position).Magnitude > MM2Cfg.DodgeRange then return end
+	-- Acha a moeda mais distante do murderer
+	local map = MM2Lib.Map()
+	local best, bestDistance
+	if map then
+		for _, coin in ipairs(map.CoinContainer:GetChildren()) do
+			if coin:IsA("BasePart") then
+				local distance = (coin.Position - threat.Position).Magnitude
+				if not bestDistance or distance > bestDistance then
+					best, bestDistance = coin, distance
+				end
+			end
+		end
+	end
+	if best then
+		MM2State.LastDodge = os.clock()
+		root.CFrame = CFrame.new(best.Position + Vector3.new(0, 3, 0))
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+end
+
+--------------------------------------------------------------------
+-- COIN FARM
+--------------------------------------------------------------------
+local Farm = {}
+
+function Farm.BagFull()
+	return MM2State.Bag.Max > 0 and MM2State.Bag.Current >= MM2State.Bag.Max
+end
+
+function Farm.CanRun()
+	return MM2State.Alive and Settings.CoinFarmEnabled and MM2Lib.IAmPlaying() and not Farm.BagFull()
+end
+
+function Farm.AttachMover(root)
+	local attachment = Instance.new("Attachment")
+	attachment.Parent = root
+	local mover = Instance.new("LinearVelocity")
+	mover.Attachment0 = attachment
+	mover.MaxForce = math.huge
+	mover.RelativeTo = Enum.ActuatorRelativeTo.World
+	mover.VectorVelocity = Vector3.zero
+	mover.Parent = root
+	MM2State.FarmMover = { Attachment = attachment, Velocity = mover }
+	return mover
+end
+
+function Farm.DetachMover()
+	local mover = MM2State.FarmMover
+	if mover then
+		pcall(function() mover.Velocity:Destroy() end)
+		pcall(function() mover.Attachment:Destroy() end)
+		MM2State.FarmMover = nil
+	end
+end
+
+function Farm.GlideTo(position)
+	local root = MM2Lib.Root()
+	local mover = MM2State.FarmMover
+	if not root or not mover or mover.Velocity.Parent ~= root then
+		Farm.DetachMover()
+		mover = root and { Velocity = Farm.AttachMover(root) }
+	end
+	while mover and Farm.CanRun() and root.Parent do
+		local delta = position - root.Position
+		if delta.Magnitude <= MM2Cfg.FarmArrive then break end
+		mover.Velocity.VectorVelocity = delta.Unit * math.min(Settings.CoinFarmSpeed, delta.Magnitude * MM2Cfg.FarmBrake)
+		RunService.Heartbeat:Wait()
+	end
+	if mover then mover.Velocity.VectorVelocity = Vector3.zero end
+end
+
+function Farm.NearestCoin(map, origin)
+	local murderer = not Murderer.Knife() and MM2Lib.FindByRole("Murderer")
+	local threat = murderer and MM2Lib.Root(murderer)
+	local best, bestDistance
+	for _, coin in ipairs(map.CoinContainer:GetChildren()) do
+		local visual = coin:FindFirstChild("CoinVisual")
+		local skippedAt = MM2State.SkippedCoins[coin]
+		local skipped = skippedAt and os.clock() - skippedAt < MM2Cfg.FarmSkipTime
+		local dangerous = threat and (coin.Position - threat.Position).Magnitude < MM2Cfg.FarmMurdererRadius
+		if coin:IsA("BasePart") and visual and not visual:GetAttribute("Collected") and not skipped and not dangerous then
+			local distance = (coin.Position - origin).Magnitude
+			if not bestDistance or distance < bestDistance then
+				best, bestDistance = coin, distance
+			end
+		end
+	end
+	return best
+end
+
+function Farm.Run()
+	local root = MM2Lib.Root()
+	if root then Farm.AttachMover(root) end
+	MM2State.FarmHome = root and root.CFrame
+	while Farm.CanRun() do
+		local map, hrp = MM2Lib.Map(), MM2Lib.Root()
+		local coin = map and hrp and Farm.NearestCoin(map, hrp.Position)
+		if coin and not MM2Lib.Busy() then
+			Farm.GlideTo(coin.Position)
+			task.wait(MM2Cfg.FarmSettle)
+			MM2State.SkippedCoins[coin] = os.clock()
+		else
+			local mover = MM2State.FarmMover
+			if mover then mover.Velocity.VectorVelocity = Vector3.zero end
+			task.wait(MM2Cfg.FarmIdleWait)
+		end
+	end
+end
+
+function Farm.Settle()
+	local root, home = MM2Lib.Root(), MM2State.FarmHome
+	MM2State.FarmHome = nil
+	if not root then return end
+	root.AssemblyLinearVelocity = Vector3.zero
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { LocalPlayer.Character }
+	local ground = workspace:Raycast(root.Position + Vector3.new(0, MM2Cfg.FarmGroundLift, 0), Vector3.new(0, -MM2Cfg.FarmGroundReach, 0), params)
+	if ground or not home then return end
+	root.CFrame = home
+end
+
+function Farm.Step()
+	if MM2State.FarmBusy or not Farm.CanRun() then return end
+	MM2State.FarmBusy = true
+	task.spawn(function()
+		local ok = pcall(Farm.Run)
+		Farm.DetachMover()
+		Farm.Settle()
+		MM2State.FarmBusy = false
+		local humanoid = MM2Lib.Humanoid()
+		if ok and humanoid and Settings.CoinFarmResetWhenFull and Farm.BagFull() then
+			humanoid.Health = 0
+		end
+	end)
+end
+
+-- Bag tracking
+if MM2GameLib.CoinCollected then
+	MM2Lib.Connect(MM2GameLib.CoinCollected.OnClientEvent, function(_, current, maximum)
+		MM2State.Bag.Current = tonumber(current) or 0
+		MM2State.Bag.Max = tonumber(maximum) or 0
+	end)
+end
+if MM2GameLib.CoinsStarted then
+	MM2Lib.Connect(MM2GameLib.CoinsStarted.OnClientEvent, function()
+		MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
+		table.clear(MM2State.SkippedCoins)
+	end)
+end
+if MM2GameLib.RoundStart then
+	MM2Lib.Connect(MM2GameLib.RoundStart.OnClientEvent, function()
+		MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
+		table.clear(MM2State.Roles)
+	end)
+end
+
+--------------------------------------------------------------------
+-- TARGETS (universal)
 --------------------------------------------------------------------
 local humanoids = {}
 local rootOf = setmetatable({}, { __mode = "k" })
@@ -584,31 +1010,30 @@ local function getTargets(purpose)
 			local modeOk
 			if plr then modeOk = plr ~= LocalPlayer and mode ~= 2
 			else modeOk = mode ~= 1 end
-			if modeOk then
-				-- Filtro MM2 no AIM
-				if purpose == "aim" and IS_MM2 and Settings.MM2SmartAim then
-					if not MM2.isValidTarget(model, plr) then
-						modeOk = false
-					end
+			if modeOk and purpose == "aim" and IS_MM2 and Settings.MM2SmartAim then
+				local myRole = MM2Lib.RoleOf(LocalPlayer)
+				local theirRole = plr and MM2Lib.RoleOf(plr) or "Innocent"
+				if myRole == "Innocent" or myRole == "Sheriff" or myRole == "Hero" then
+					if theirRole ~= "Murderer" then modeOk = false end
 				end
-				if modeOk then
-					local mate = isTeammate(model, plr)
-					local include
-					if purpose == "esp" then
-						include = (not mate) or Settings.ESPTeammates
-					else
-						include = (not mate) or (not Settings.TeamCheck)
-					end
-					if include then
-						local root = getRoot(model)
-						if root then
-							local e = entries[model]
-							if not e then e = {}; entries[model] = e end
-							e.Model = model; e.Humanoid = hum; e.Root = root
-							e.Player = plr; e.Teammate = mate
-							n += 1
-							list[n] = e
-						end
+			end
+			if modeOk then
+				local mate = isTeammate(model, plr)
+				local include
+				if purpose == "esp" then
+					include = (not mate) or Settings.ESPTeammates
+				else
+					include = (not mate) or (not Settings.TeamCheck)
+				end
+				if include then
+					local root = getRoot(model)
+					if root then
+						local e = entries[model]
+						if not e then e = {}; entries[model] = e end
+						e.Model = model; e.Humanoid = hum; e.Root = root
+						e.Player = plr; e.Teammate = mate
+						n += 1
+						list[n] = e
 					end
 				end
 			end
@@ -772,93 +1197,13 @@ local function getCandidates(force)
 end
 
 --------------------------------------------------------------------
--- GRAB GUN DROPPED
+-- GRAB GUN (compatibilidade com o resto do script)
 --------------------------------------------------------------------
 local GrabGun = {}
-do
-	local lastGrab = 0
-
-	local function tryGrabGun(tool)
-		if not tool or not tool.Parent then return false end
-		if not tool:IsA("Tool") then return false end
-		local handle = tool:FindFirstChild("Handle")
-		if not handle or not handle:IsA("BasePart") then return false end
-
-		local myRole = MM2.getMyRole()
-		if myRole ~= "innocent" then
-			notify("Grab Gun: você não é Inocente", "off")
-			return false
-		end
-
-		local myRoot = getLocalRoot()
-		if not myRoot then return false end
-		local targetPos = myRoot.Position + myRoot.CFrame.LookVector * 3 + Vector3.new(0, 1, 0)
-		pcall(function()
-			tool:SetPrimaryPartCFrame(CFrame.new(targetPos))
-			local hum = getLocalHumanoid()
-			if hum then
-				pcall(function() hum:EquipTool(tool) end)
-			end
-		end)
-		return true
-	end
-
-	function GrabGun.grabNearest()
-		if not IS_MM2 then
-			notify("Grab Gun: só funciona no MM2", "off")
-			return false
-		end
-		local myRole = MM2.getMyRole()
-		if myRole ~= "innocent" then
-			notify("Grab Gun: você não é Inocente", "off")
-			return false
-		end
-
-		local guns = MM2.getDroppedGuns()
-		if #guns == 0 then
-			notify("Grab Gun: nenhuma arma dropada", "off")
-			return false
-		end
-
-		local myRoot = getLocalRoot()
-		if not myRoot then return false end
-		local myPos = myRoot.Position
-
-		local best, bestD = nil, math.huge
-		for _, tool in ipairs(guns) do
-			local handle = tool:FindFirstChild("Handle")
-			if handle then
-				local d = (handle.Position - myPos).Magnitude
-				if d < bestD then
-					best, bestD = tool, d
-				end
-			end
-		end
-
-		if not best then
-			notify("Grab Gun: nenhuma arma no alcance", "off")
-			return false
-		end
-
-		if bestD > Settings.MM2GrabRange then
-			notify("Grab Gun: arma muito longe (" .. math.floor(bestD) .. "m)", "off")
-			return false
-		end
-
-		if tryGrabGun(best) then
-			notify("Grab Gun: pegando arma (" .. math.floor(bestD) .. "m)", "on")
-			return true
-		end
-		return false
-	end
-
-	function GrabGun.step()
-		if not Settings.MM2AutoGrabGun or not IS_MM2 then return end
-		if MM2.getMyRole() ~= "innocent" then return end
-		local now = os.clock()
-		if now - lastGrab < 0.5 then return end
-		lastGrab = now
-		GrabGun.grabNearest()
+function GrabGun.grabNearest() return Sheriff.GrabGun() end
+function GrabGun.step()
+	if Settings.MM2AutoGrabGun then
+		Sheriff.AutoGrabStep()
 	end
 end
 
@@ -1131,6 +1476,8 @@ LocalPlayer.CharacterAdded:Connect(function(char)
 	stableOld, stableNew = nil, nil
 	walkLastPos = nil
 	trackMyCharacter(char)
+	MM2State.Roles = {}
+	MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
 end)
 
 --------------------------------------------------------------------
@@ -1468,10 +1815,7 @@ RunService:BindToRenderStep("TestToolkitAim", Enum.RenderPriority.Camera.Value +
 		if currentTarget then
 			local m, hum = currentTarget.Model, currentTarget.Humanoid
 			if not m.Parent or not isAlive(hum) then currentTarget = nil
-			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil
-			elseif IS_MM2 and Settings.MM2SmartAim and not MM2.isValidTarget(m, currentTarget.Player) then
-				currentTarget = nil
-			end
+			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
 		end
 
 		if not currentTarget then
@@ -1593,31 +1937,17 @@ do
 	local groupsReady = false
 
 	local function setupGroups()
-		local ok = pcall(function()
-			PhysicsService:RegisterCollisionGroup(HB_GROUP)
-		end)
-		pcall(function()
-			PhysicsService:RegisterCollisionGroup(PLAYER_GROUP)
-		end)
-		pcall(function()
-			PhysicsService:CollisionGroupSetCollidable(HB_GROUP, HB_GROUP, false)
-		end)
-		pcall(function()
-			PhysicsService:CollisionGroupSetCollidable(HB_GROUP, PLAYER_GROUP, false)
-		end)
-		pcall(function()
-			PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PLAYER_GROUP, false)
-		end)
-		pcall(function()
-			PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, "Default", true)
-		end)
+		local ok = pcall(function() PhysicsService:RegisterCollisionGroup(HB_GROUP) end)
+		pcall(function() PhysicsService:RegisterCollisionGroup(PLAYER_GROUP) end)
+		pcall(function() PhysicsService:CollisionGroupSetCollidable(HB_GROUP, HB_GROUP, false) end)
+		pcall(function() PhysicsService:CollisionGroupSetCollidable(HB_GROUP, PLAYER_GROUP, false) end)
+		pcall(function() PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PLAYER_GROUP, false) end)
+		pcall(function() PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, "Default", true) end)
 		groupsReady = true
 		return ok
 	end
 
-	task.spawn(function()
-		pcall(setupGroups)
-	end)
+	task.spawn(function() pcall(setupGroups) end)
 
 	local function markPlayerPart(part)
 		if not part or not part:IsA("BasePart") then return end
@@ -1632,9 +1962,7 @@ do
 			if d:IsA("BasePart") then markPlayerPart(d) end
 		end
 		char.DescendantAdded:Connect(function(d)
-			if d:IsA("BasePart") then
-				task.defer(markPlayerPart, d)
-			end
+			if d:IsA("BasePart") then task.defer(markPlayerPart, d) end
 		end)
 	end
 
@@ -1654,9 +1982,7 @@ do
 	local function getActiveParts()
 		local list = {}
 		for _, entry in ipairs(PART_KEYS) do
-			if Settings[entry[2]] then
-				list[#list + 1] = entry[1]
-			end
+			if Settings[entry[2]] then list[#list + 1] = entry[1] end
 		end
 		return list
 	end
@@ -1664,12 +1990,8 @@ do
 	local function savePart(part)
 		if savedProps[part] then return end
 		savedProps[part] = {
-			Size = part.Size,
-			CanCollide = part.CanCollide,
-			Massless = part.Massless,
-			Transparency = part.Transparency,
-			Color = part.Color,
-			Material = part.Material,
+			Size = part.Size, CanCollide = part.CanCollide, Massless = part.Massless,
+			Transparency = part.Transparency, Color = part.Color, Material = part.Material,
 			CollisionGroup = part.CollisionGroup,
 		}
 	end
@@ -1694,9 +2016,7 @@ do
 		if not char then return end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum or hum.Health <= 0 then return end
-
-		local activeParts = getActiveParts()
-		for _, name in ipairs(activeParts) do
+		for _, name in ipairs(getActiveParts()) do
 			local part = char:FindFirstChild(name)
 			if part and part:IsA("BasePart") then
 				savePart(part)
@@ -1706,11 +2026,7 @@ do
 					part.CanCollide = false
 					part.Massless = true
 					if groupsReady then part.CollisionGroup = HB_GROUP end
-					if Settings.HitboxInvisible then
-						part.Transparency = 1
-					else
-						part.Transparency = 0.5
-					end
+					part.Transparency = Settings.HitboxInvisible and 1 or 0.5
 				end)
 			end
 		end
@@ -1721,9 +2037,7 @@ do
 		if not char then return end
 		for _, entry in ipairs(PART_KEYS) do
 			local part = char:FindFirstChild(entry[1])
-			if part and part:IsA("BasePart") then
-				restorePart(part)
-			end
+			if part and part:IsA("BasePart") then restorePart(part) end
 		end
 	end
 
@@ -1732,27 +2046,18 @@ do
 		if not char then return false end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum or hum.Health <= 0 then return false end
-
 		local myRoot = getLocalRoot()
 		local theirRoot = getRoot(char)
 		if not myRoot or not theirRoot then return false end
-
 		local dist = (theirRoot.Position - myRoot.Position).Magnitude
 		if dist > math.max(10, Settings.HitboxRange or 200) then return false end
-
-		if Settings.HitboxIgnoreAllies then
-			if isTeammate(char, player) then return false end
-		end
-
+		if Settings.HitboxIgnoreAllies and isTeammate(char, player) then return false end
 		if Settings.HitboxWallCheck then
 			local head = char:FindFirstChild("Head")
 			if head and not hasLineOfSight(head, char) then
-				if not hasLineOfSight(theirRoot, char) then
-					return false
-				end
+				if not hasLineOfSight(theirRoot, char) then return false end
 			end
 		end
-
 		return true
 	end
 
@@ -1762,24 +2067,16 @@ do
 	local function step()
 		if not Settings.HitboxExpander then
 			for _, plr in ipairs(Players:GetPlayers()) do
-				if plr ~= LocalPlayer then
-					restorePlayer(plr)
-				end
+				if plr ~= LocalPlayer then restorePlayer(plr) end
 			end
 			return
 		end
-
 		local now = os.clock()
 		if now - lastApply < APPLY_INTERVAL then return end
 		lastApply = now
-
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= LocalPlayer then
-				if shouldExpand(plr) then
-					expandPlayer(plr)
-				else
-					restorePlayer(plr)
-				end
+				if shouldExpand(plr) then expandPlayer(plr) else restorePlayer(plr) end
 			end
 		end
 	end
@@ -1787,17 +2084,13 @@ do
 	HitboxExpander.step = step
 	HitboxExpander.restoreAll = function()
 		for _, plr in ipairs(Players:GetPlayers()) do
-			if plr ~= LocalPlayer then
-				restorePlayer(plr)
-			end
+			if plr ~= LocalPlayer then restorePlayer(plr) end
 		end
 	end
 end
 
 task.spawn(function()
-	while task.wait(0.1) do
-		pcall(HitboxExpander.step)
-	end
+	while task.wait(0.1) do pcall(HitboxExpander.step) end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function()
@@ -1806,7 +2099,7 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- INVISIBILIDADE VIA SEAT (ORIGINAL - v59)
+-- INVISIBILIDADE VIA SEAT
 --------------------------------------------------------------------
 local SeatInvisible = {}
 do
@@ -1815,9 +2108,7 @@ do
 
 	local function cleanupSeat()
 		local existing = workspace:FindFirstChild("invischair")
-		if existing then
-			pcall(function() existing:Destroy() end)
-		end
+		if existing then pcall(function() existing:Destroy() end) end
 		mySeat = nil
 	end
 
@@ -1825,25 +2116,20 @@ do
 		local bestPos = Vector3.new(-25.95, 84, 3537.55)
 		local myRoot = getLocalRoot()
 		if not myRoot then return bestPos end
-
 		pcall(function()
-			local xs, ys, zs = {}, {}, {}
+			local xs, zs = {}, {}
 			local count = 0
 			for _, d in ipairs(Workspace:GetDescendants()) do
 				if d:IsA("BasePart") and d.Anchored then
-					local p = d.Position
-					xs[#xs + 1] = p.X
-					ys[#ys + 1] = p.Y
-					zs[#zs + 1] = p.Z
+					xs[#xs + 1] = d.Position.X
+					zs[#zs + 1] = d.Position.Z
 					count += 1
 					if count >= 500 then break end
 				end
 			end
 			if #xs >= 10 then
 				table.sort(xs); table.sort(zs)
-				local maxX = xs[#xs]
-				local minZ = zs[1]
-				bestPos = Vector3.new(maxX + 5000, 500, minZ - 5000)
+				bestPos = Vector3.new(xs[#xs] + 5000, 500, zs[1] - 5000)
 			end
 		end)
 		return bestPos
@@ -1854,19 +2140,11 @@ do
 		if not char then return end
 		local hrp = char:FindFirstChild("HumanoidRootPart")
 		if not hrp then return end
-
 		cleanupSeat()
-
 		local savedPosition = hrp.CFrame
-		local targetPos = Vector3.new(
-			Settings.SeatInvisibleX,
-			Settings.SeatInvisibleY,
-			Settings.SeatInvisibleZ
-		)
-
+		local targetPos = Vector3.new(Settings.SeatInvisibleX, Settings.SeatInvisibleY, Settings.SeatInvisibleZ)
 		char:MoveTo(targetPos)
 		task.wait(0.15)
-
 		local seat = Instance.new("Seat")
 		seat.Name = "invischair"
 		seat.Anchored = false
@@ -1875,30 +2153,22 @@ do
 		seat.Position = targetPos
 		seat.Parent = workspace
 		mySeat = seat
-
 		local weld = Instance.new("Weld")
 		weld.Part0 = seat
 		weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
 		weld.Parent = seat
-
 		task.wait()
-
 		seat.CFrame = savedPosition
-
-		for _, descendant in ipairs(char:GetDescendants()) do
-			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-				descendant.Transparency = 0.5
-			end
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0.5 end
 		end
 	end
 
 	local function deactivate()
 		cleanupSeat()
 		if LocalPlayer.Character then
-			for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
-				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-					descendant.Transparency = 0
-				end
+			for _, d in ipairs(LocalPlayer.Character:GetDescendants()) do
+				if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0 end
 			end
 		end
 	end
@@ -1906,18 +2176,11 @@ do
 	local function toggleInvisibility()
 		active = not active
 		Settings.SeatInvisible = active
-
-		if active then
-			activate()
-		else
-			deactivate()
-		end
-
+		if active then activate() else deactivate() end
 		if uiRefresh then pcall(uiRefresh) end
 	end
 
 	SeatInvisible.toggle = toggleInvisibility
-	SeatInvisible.isActive = function() return active end
 	SeatInvisible.findSafeCoords = findSafeCoords
 	SeatInvisible.forceOff = function()
 		if active then
@@ -1944,11 +2207,9 @@ do
 			if active then
 				local char = LocalPlayer.Character
 				if char then
-					for _, descendant in ipairs(char:GetDescendants()) do
-						if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-							if descendant.Transparency ~= 0.5 and descendant.Transparency ~= 1 then
-								descendant.Transparency = 0.5
-							end
+					for _, d in ipairs(char:GetDescendants()) do
+						if d:IsA("BasePart") or d:IsA("Decal") then
+							if d.Transparency ~= 0.5 and d.Transparency ~= 1 then d.Transparency = 0.5 end
 						end
 					end
 				end
@@ -2061,7 +2322,7 @@ local function flyGuard(root, dt)
 			Settings.FlySpeed = new
 			flyCur = math.min(flyCur, new)
 			uiRefresh()
-			notify("Voo: puxão detectado, velocidade reduzida para " .. new, "off")
+			notify("Voo: puxão detectado, reduzido para " .. new, "off")
 		end
 	end
 end
@@ -2098,7 +2359,7 @@ local function walkGuard(hum, root, dt)
 end
 
 --------------------------------------------------------------------
--- FLING
+-- FLING (Bots + Players)
 --------------------------------------------------------------------
 local Fling = {}
 do
@@ -2162,8 +2423,6 @@ do
 		pcall(function()
 			targetRoot.AssemblyLinearVelocity = linVel
 			targetRoot.AssemblyAngularVelocity = angVel
-			targetRoot.Velocity = linVel
-			targetRoot.RotVelocity = angVel
 		end)
 		pcall(function()
 			for _, part in ipairs(targetRoot.Parent:GetDescendants()) do
@@ -2173,6 +2432,49 @@ do
 				end
 			end
 		end)
+		return true
+	end
+
+	-- Fling estilo Mario Hub para players (usa BodyAngularVelocity + noclip)
+	local function doFlingPlayer(target)
+		local targetRoot = MM2Lib.Root(target)
+		local myRoot = MM2Lib.Root()
+		if not targetRoot or not myRoot or MM2Lib.Busy() then return false end
+		MM2Lib.SetBusy(true)
+		local home = myRoot.CFrame
+		local spin = Instance.new("BodyAngularVelocity")
+		spin.MaxTorque = Vector3.one * math.huge
+		spin.AngularVelocity = Vector3.new(0, MM2Cfg.FlingForce, 0)
+		spin.Parent = myRoot
+		-- Ativa noclip temporariamente
+		local savedNoclip = {}
+		local char = LocalPlayer.Character
+		if char then
+			for _, part in ipairs(char:GetChildren()) do
+				if part:IsA("BasePart") then
+					savedNoclip[part] = part.CanCollide
+					part.CanCollide = false
+				end
+			end
+		end
+		local started = os.clock()
+		while os.clock() - started < MM2Cfg.FlingTime do
+			local currentTarget = MM2Lib.Root(target)
+			if not currentTarget or not myRoot.Parent then break end
+			myRoot.CFrame = currentTarget.CFrame
+			myRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			RunService.Heartbeat:Wait()
+		end
+		spin:Destroy()
+		if myRoot.Parent then
+			myRoot.AssemblyAngularVelocity = Vector3.zero
+			myRoot.AssemblyLinearVelocity = Vector3.zero
+			myRoot.CFrame = home
+		end
+		for part, canCollide in pairs(savedNoclip) do
+			if part.Parent then part.CanCollide = canCollide end
+		end
+		MM2Lib.SetBusy(false)
 		return true
 	end
 
@@ -2211,33 +2513,75 @@ do
 		return list
 	end
 
+	Fling.doFlingPlayer = doFlingPlayer
+
 	Fling.step = function()
-		if not Settings.Fling then
-			if flingActive then
-				flingActive = false
-				restoreAllCollide()
+		-- Fling em bots
+		if Settings.Fling then
+			local now = os.clock()
+			local jitter = (math.random() - 0.5) * 0.04
+			if now - lastFling >= Settings.FlingRepeat + jitter then
+				lastFling = now
+				local myHum, myRoot = getLocalHumanoid(), getLocalRoot()
+				if myHum and myHum.Health > 0 then
+					flingActive = true
+					local targets = pickFlingTargets()
+					if #targets == 0 then
+						if now - lastNotify > 4 then
+							lastNotify = now
+							notify("Fling: nenhum BOT no alcance", "off")
+						end
+					else
+						local power = Settings.FlingPower
+						local mode = Settings.FlingMode2 or 2
+						for i = 1, #targets do
+							doFling(targets[i].Parts.Root, myRoot, power, mode)
+						end
+					end
+				end
 			end
-			return
+		elseif flingActive then
+			flingActive = false
+			restoreAllCollide()
 		end
-		local now = os.clock()
-		local jitter = (math.random() - 0.5) * 0.04
-		if now - lastFling < Settings.FlingRepeat + jitter then return end
-		lastFling = now
-		local myHum, myRoot = getLocalHumanoid(), getLocalRoot()
-		if not myHum or myHum.Health <= 0 then return end
-		flingActive = true
-		local targets = pickFlingTargets()
-		if #targets == 0 then
-			if now - lastNotify > 4 then
-				lastNotify = now
-				notify("Fling: nenhum BOT no alcance (" .. Settings.FlingRange .. " studs)", "off")
+
+		-- Fling em players (universal)
+		if Settings.FlingPlayers and not MM2State.FlingBusy then
+			local now = os.clock()
+			if now - (MM2State.LastFlingPlayer or 0) >= 0.5 then
+				MM2State.LastFlingPlayer = now
+				MM2State.FlingBusy = true
+				task.spawn(function()
+					local myRoot = getLocalRoot()
+					if myRoot then
+						local targets = {}
+						local myPos = myRoot.Position
+						local mode = Settings.FlingPlayerMode
+						local range = Settings.FlingPlayerRange
+						if mode == 2 and currentTarget and currentTarget.Player then
+							targets = { currentTarget.Player }
+						else
+							for _, plr in ipairs(Players:GetPlayers()) do
+								if plr ~= LocalPlayer then
+									local r = MM2Lib.Root(plr)
+									if r and (r.Position - myPos).Magnitude <= range then
+										targets[#targets + 1] = plr
+									end
+								end
+							end
+							table.sort(targets, function(a, b)
+								local ra, rb = MM2Lib.Root(a), MM2Lib.Root(b)
+								return ra and rb and (ra.Position - myPos).Magnitude < (rb.Position - myPos).Magnitude
+							end)
+							if mode == 1 and #targets > 1 then targets = { targets[1] } end
+						end
+						for _, target in ipairs(targets) do
+							doFlingPlayer(target)
+						end
+					end
+					MM2State.FlingBusy = false
+				end)
 			end
-			return
-		end
-		local power = Settings.FlingPower
-		local mode = Settings.FlingMode2 or 2
-		for i = 1, #targets do
-			doFling(targets[i].Parts.Root, myRoot, power, mode)
 		end
 	end
 
@@ -2245,7 +2589,7 @@ do
 end
 
 --------------------------------------------------------------------
--- HEARTBEAT
+-- HEARTBEAT (main loop)
 --------------------------------------------------------------------
 local defaultWalkSpeed = 16
 local defaultJumpPower, defaultUseJumpPower = 50, true
@@ -2376,69 +2720,21 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 		end
 
+		-- Fling
 		Fling.step()
+
+		-- MM2 loops
+		if IS_MM2 then
+			pcall(MM2Lib.RefreshRoles)
+			pcall(Sheriff.AutoShootStep)
+			pcall(Sheriff.AutoGrabStep)
+			pcall(Murderer.AutoKillStep)
+			pcall(Murderer.KillAuraStep)
+			pcall(KaitunStep)
+			pcall(DodgeStep)
+			pcall(Farm.Step)
+		end
 	end)
-end)
-
-local ANTIFLING_RADIUS = 60
-local nearAcc, nearList = 0, {}
-local noclipTouched = setmetatable({}, { __mode = "k" })
-local noclipWasOn = false
-local antiTouched = setmetatable({}, { __mode = "k" })
-local antiWasOn = false
-
-RunService.Stepped:Connect(function(_, dt)
-	if Settings.Noclip then
-		noclipWasOn = true
-		for part in pairs(myParts) do
-			if part.CanCollide then
-				part.CanCollide = false
-				noclipTouched[part] = true
-			end
-		end
-	elseif noclipWasOn then
-		noclipWasOn = false
-		for part in pairs(noclipTouched) do
-			if part.Parent then part.CanCollide = true end
-			noclipTouched[part] = nil
-		end
-	end
-
-	if Settings.AntiFling then
-		antiWasOn = true
-		nearAcc += dt
-		if nearAcc >= 0.1 then
-			nearAcc = 0
-			table.clear(nearList)
-			local myRoot = getLocalRoot()
-			if myRoot then
-				local myPos = myRoot.Position
-				for _, data in pairs(otherChars) do
-					local r = data.Root
-					if r and r.Parent and data.Parts and (r.Position - myPos).Magnitude <= ANTIFLING_RADIUS then
-						nearList[#nearList + 1] = data
-					end
-				end
-			end
-		end
-		for i = 1, #nearList do
-			if nearList[i].Parts then
-				for part in pairs(nearList[i].Parts) do
-					if part.CanCollide then
-						part.CanCollide = false
-						antiTouched[part] = true
-					end
-				end
-			end
-		end
-	elseif antiWasOn then
-		antiWasOn = false
-		table.clear(nearList)
-		for part in pairs(antiTouched) do
-			if part.Parent then part.CanCollide = true end
-			antiTouched[part] = nil
-		end
-	end
 end)
 
 --------------------------------------------------------------------
@@ -2479,9 +2775,8 @@ do
 			for _, d in ipairs(Workspace:GetDescendants()) do
 				if d:IsA("BasePart") and d ~= Workspace.Terrain and d.Anchored and d.CanCollide
 					and d.Size.Magnitude < 2000 and not isBadGround(d) then
-					local p = d.Position
-					xs[#xs + 1] = p.X
-					zs[#zs + 1] = p.Z
+					xs[#xs + 1] = d.Position.X
+					zs[#zs + 1] = d.Position.Z
 				end
 				n += 1
 				if n % 400 == 0 then task.wait() end
@@ -2498,10 +2793,7 @@ do
 		end)
 	end
 
-	AntiKill.recalc = function()
-		bounds = nil
-		scanMap()
-	end
+	AntiKill.recalc = function() bounds = nil; scanMap() end
 
 	local function isInside(p, m)
 		return p.X >= bounds.minX - m and p.X <= bounds.maxX + m
@@ -2566,19 +2858,16 @@ do
 				rp2.FilterDescendantsInstances = { char }
 			end
 			if not bounds and not scanning then scanMap() end
-
 			local now = os.clock()
 			local pos, vel = root.Position, root.AssemblyLinearVelocity
 			local airborne = hum.FloorMaterial == Enum.Material.Air
 			local danger, why = false, nil
 			local destroyY = Workspace.FallenPartsDestroyHeight
-
 			if pos.Y < destroyY + 80 then
 				danger, why = true, "altura do vazio"
 			elseif vel.Y < -40 and pos.Y + vel.Y * 0.4 < destroyY + 80 and noGround(pos) then
 				danger, why = true, "queda no vazio"
 			end
-
 			if not danger and not Settings.Fly then
 				if airborne and now >= nextFall
 					and (vel.Y < -40 or (Settings.Noclip and vel.Y < -12)) then
@@ -2596,12 +2885,10 @@ do
 					end
 				end
 			end
-
 			if danger then
 				if now - lastRescue >= 0.1 then rescue(root, why) end
 				return
 			end
-
 			if not airborne and now - histTimer >= 0.4 and vel.Y > -30 then
 				histTimer = now
 				local hit = Workspace:Raycast(pos, Vector3.new(0, -12, 0), rp)
@@ -2627,9 +2914,8 @@ end)
 LocalPlayer.Idled:Connect(function()
 	if not Settings.AntiAFK then return end
 	pcall(function()
-		local vu = game:GetService("VirtualUser")
-		vu:CaptureController()
-		vu:ClickButton2(Vector2.new())
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new())
 	end)
 end)
 
@@ -2651,9 +2937,7 @@ local function litApply()
 				litSaved[key] = saved
 			end
 		elseif litSaved[key] then
-			for p, v in pairs(litSaved[key]) do
-				pcall(function() Lit[p] = v end)
-			end
+			for p, v in pairs(litSaved[key]) do pcall(function() Lit[p] = v end) end
 			litSaved[key] = nil
 		end
 	end
@@ -2685,6 +2969,384 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 local camFovDefault = nil
+
+--------------------------------------------------------------------
+-- ESP (estilo Mario Hub - Highlight + BillboardGui)
+--------------------------------------------------------------------
+local espRoot = Instance.new("Frame")
+espRoot.Name = "ESP"
+espRoot.Size = UDim2.fromScale(1, 1)
+espRoot.BackgroundTransparency = 1
+espRoot.ZIndex = 1
+espRoot.Parent = gui
+
+local ALLY_COLOR = Color3.fromRGB(80, 190, 255)
+local espObjs = {}
+local espSel = {}
+
+local function mkFrame(parent, round)
+	local f = Instance.new("Frame")
+	f.BorderSizePixel = 0
+	f.Visible = false
+	f.ZIndex = 1
+	f.Parent = parent
+	if round then corner(f, 9999) end
+	return f
+end
+
+local function mkText(parent, size)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.GothamBold
+	l.TextSize = size
+	l.TextColor3 = Color3.new(1, 1, 1)
+	l.TextStrokeTransparency = 0.35
+	l.Size = UDim2.fromOffset(220, 14)
+	l.Visible = false
+	l.ZIndex = 5
+	l.Parent = parent
+	return l
+end
+
+local function newEsp(model)
+	local o = { Model = model, Seen = 0, H = 5.5, HAt = -1, Tool = "", ToolAt = -1 }
+	local hl = Instance.new("Highlight")
+	hl.Name = "TTHighlight"
+	hl.Adornee = model
+	hl.Enabled = false
+	hl.FillTransparency = 0.65
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = gui
+	o.HL = hl
+
+	local holder = Instance.new("Frame")
+	holder.BackgroundTransparency = 1
+	holder.Size = UDim2.fromScale(1, 1)
+	holder.Visible = false
+	holder.ZIndex = 1
+	holder.Parent = espRoot
+	o.Holder = holder
+
+	o.Box = mkFrame(holder)
+	o.Box.BackgroundTransparency = 1
+	o.BoxStroke = stroke(o.Box, Color3.new(1, 1, 1), 0, 1.5)
+	o.Corners = {}
+	for i = 1, 8 do o.Corners[i] = mkFrame(holder) end
+	o.HpBg = mkFrame(holder)
+	o.HpBg.BackgroundColor3 = Color3.new(0, 0, 0)
+	o.HpBg.BackgroundTransparency = 0.4
+	o.HpFill = Instance.new("Frame")
+	o.HpFill.AnchorPoint = Vector2.new(0, 1)
+	o.HpFill.Position = UDim2.fromScale(0, 1)
+	o.HpFill.BorderSizePixel = 0
+	o.HpFill.ZIndex = 1
+	o.HpFill.Parent = o.HpBg
+	o.Name = mkText(holder, 13)
+	o.Name.AnchorPoint = Vector2.new(0.5, 1)
+	o.ToolLbl = mkText(holder, 11)
+	o.ToolLbl.AnchorPoint = Vector2.new(0.5, 0)
+	o.Dot = mkFrame(holder, true)
+	o.Dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	o.Dot.Size = UDim2.fromOffset(6, 6)
+	o.Tracer = mkFrame(holder)
+	o.Tracer.AnchorPoint = Vector2.new(0.5, 0.5)
+	return o
+end
+
+local function hideEsp(o)
+	o.Holder.Visible = false
+	o.HL.Enabled = false
+end
+
+local function destroyEsp(model, o)
+	pcall(function() o.HL:Destroy() end)
+	pcall(function() o.Holder:Destroy() end)
+	espObjs[model] = nil
+end
+
+-- ESP para arma dropada
+local droppedEsp = {}
+
+local function makeDropEsp(tool)
+	local hl = Instance.new("Highlight")
+	hl.Name = "TTDropHL"
+	hl.Adornee = tool
+	hl.FillColor = MM2Cfg.Colors.Gun
+	hl.OutlineColor = MM2Cfg.Colors.Gun
+	hl.FillTransparency = 0.65
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = gui
+
+	local name = Instance.new("TextLabel")
+	name.BackgroundTransparency = 1
+	name.Font = Enum.Font.GothamBold
+	name.TextSize = 14
+	name.TextColor3 = MM2Cfg.Colors.Gun
+	name.TextStrokeTransparency = 0.4
+	name.Size = UDim2.fromOffset(160, 18)
+	name.AnchorPoint = Vector2.new(0.5, 1)
+	name.Text = "GUN DROP"
+	name.Visible = true
+	name.ZIndex = 5
+	name.Parent = espRoot
+
+	return { HL = hl, Name = name, Tool = tool }
+end
+
+local function updateDroppedGuns(now)
+	if not Settings.MM2EspGun or not Settings.MM2Mode or not IS_MM2 then
+		for tool, o in pairs(droppedEsp) do
+			pcall(function() o.HL:Destroy() end)
+			pcall(function() o.Name:Destroy() end)
+			droppedEsp[tool] = nil
+		end
+		return
+	end
+	local drop = MM2Lib.GunDrop()
+	if not drop then
+		for tool, o in pairs(droppedEsp) do
+			pcall(function() o.HL:Destroy() end)
+			pcall(function() o.Name:Destroy() end)
+			droppedEsp[tool] = nil
+		end
+		return
+	end
+	if droppedEsp[drop] then
+		local o = droppedEsp[drop]
+		local handle = drop:IsA("BasePart") and drop or drop:FindFirstChildWhichIsA("BasePart", true)
+		if handle then
+			local sp, on = Camera:WorldToViewportPoint(handle.Position + Vector3.new(0, 2, 0))
+			o.Name.Visible = on
+			if on then o.Name.Position = UDim2.fromOffset(sp.X, sp.Y) end
+		end
+		return
+	end
+	-- Limpa antigos
+	for tool, o in pairs(droppedEsp) do
+		pcall(function() o.HL:Destroy() end)
+		pcall(function() o.Name:Destroy() end)
+		droppedEsp[tool] = nil
+	end
+	local o = makeDropEsp(drop)
+	droppedEsp[drop] = o
+	local handle = drop:IsA("BasePart") and drop or drop:FindFirstChildWhichIsA("BasePart", true)
+	if handle then
+		local sp, on = Camera:WorldToViewportPoint(handle.Position + Vector3.new(0, 2, 0))
+		o.Name.Visible = on
+		if on then o.Name.Position = UDim2.fromOffset(sp.X, sp.Y) end
+	end
+end
+
+local function px(v) return math.floor(v + 0.5) end
+
+local function drawEsp(o, t, dist, now, vp)
+	local model = t.Model
+	local color = t.Teammate and ALLY_COLOR
+		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
+	local mm2Role = nil
+
+	-- Modo MM2: usa as cores exatas do Mario Hub
+	if IS_MM2 and Settings.MM2Mode and Settings.MM2EspPlayers and t.Player then
+		mm2Role = MM2Lib.RoleOf(t.Player)
+		if mm2Role == "Murderer" then color = MM2Cfg.Colors.Murderer
+		elseif mm2Role == "Sheriff" then color = MM2Cfg.Colors.Sheriff
+		elseif mm2Role == "Hero" then color = MM2Cfg.Colors.Hero
+		elseif mm2Role == "Innocent" then color = MM2Cfg.Colors.Innocent
+		end
+	end
+
+	if Settings.ESPHighlight then
+		local hl = o.HL
+		hl.Enabled = true
+		hl.FillColor = color
+		hl.OutlineColor = color
+		hl.FillTransparency = Settings.ESPFillTrans
+		hl.DepthMode = Settings.Wallhack and Enum.HighlightDepthMode.AlwaysOnTop
+			or Enum.HighlightDepthMode.Occluded
+	else
+		o.HL.Enabled = false
+	end
+
+	local rootPos = t.Root.Position
+	if now - o.HAt > 0.5 then
+		o.HAt = now
+		local ok, sz = pcall(function() return model:GetExtentsSize() end)
+		if ok and sz.Y > 1 then o.H = sz.Y end
+	end
+	local h = o.H
+	local center = Camera:WorldToViewportPoint(rootPos)
+	if center.Z <= 0 then
+		o.Holder.Visible = false
+		return
+	end
+	local top = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, h * 0.45, 0))
+	local bot = Camera:WorldToViewportPoint(rootPos - Vector3.new(0, h * 0.55, 0))
+	local boxH = math.max(bot.Y - top.Y, 6)
+	local boxW = boxH * 0.55
+	local x, y = px(center.X - boxW / 2), px(top.Y)
+	boxW, boxH = px(boxW), px(boxH)
+
+	o.Holder.Visible = true
+
+	local boxMode = Settings.ESPBox
+	o.Box.Visible = boxMode == 2
+	if boxMode == 2 then
+		o.Box.Position = UDim2.fromOffset(x, y)
+		o.Box.Size = UDim2.fromOffset(boxW, boxH)
+		o.BoxStroke.Color = color
+	end
+	if boxMode == 3 then
+		local L, th = math.max(4, px(boxW * 0.28)), 2
+		local r, b = x + boxW, y + boxH
+		local specs = {
+			{ x, y, L, th }, { x, y, th, L },
+			{ r - L, y, L, th }, { r - th, y, th, L },
+			{ x, b - th, L, th }, { x, b - L, th, L },
+			{ r - L, b - th, L, th }, { r - th, b - L, th, L },
+		}
+		for i = 1, 8 do
+			local f, s = o.Corners[i], specs[i]
+			f.BackgroundColor3 = color
+			f.Position = UDim2.fromOffset(s[1], s[2])
+			f.Size = UDim2.fromOffset(s[3], s[4])
+			f.Visible = true
+		end
+	else
+		for i = 1, 8 do o.Corners[i].Visible = false end
+	end
+
+	if Settings.ShowHealth then
+		local hum = t.Humanoid
+		local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+		o.HpBg.Visible = true
+		o.HpBg.Position = UDim2.fromOffset(x - 6, y)
+		o.HpBg.Size = UDim2.fromOffset(3, boxH)
+		o.HpFill.Size = UDim2.new(1, 0, frac, 0)
+		o.HpFill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.9, 1)
+	else
+		o.HpBg.Visible = false
+	end
+
+	if Settings.ShowNames or (IS_MM2 and Settings.MM2EspPlayers and t.Player) then
+		local plr = t.Player
+		local roleTag = ""
+		if IS_MM2 and Settings.MM2Mode and mm2Role then
+			roleTag = " [" .. string.upper(mm2Role) .. "]"
+		end
+		o.Name.Visible = true
+		o.Name.Text = (plr and plr.DisplayName or model.Name) .. roleTag
+			.. "  [" .. math.floor(dist) .. "m]"
+		o.Name.TextColor3 = color
+		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
+		o.Name.ZIndex = 5
+	else
+		o.Name.Visible = false
+	end
+
+	if Settings.ESPTool then
+		if now - o.ToolAt > 0.5 then
+			o.ToolAt = now
+			local tool = model:FindFirstChildOfClass("Tool")
+			o.Tool = tool and tool.Name or ""
+		end
+		o.ToolLbl.Visible = o.Tool ~= ""
+		o.ToolLbl.Text = o.Tool
+		o.ToolLbl.Position = UDim2.fromOffset(px(center.X), y + boxH + 2)
+	else
+		o.ToolLbl.Visible = false
+	end
+
+	if Settings.ESPHeadDot then
+		local head = model:FindFirstChild("Head")
+		if head and head:IsA("BasePart") then
+			local hp, on = Camera:WorldToViewportPoint(head.Position)
+			o.Dot.Visible = on
+			o.Dot.BackgroundColor3 = color
+			o.Dot.Position = UDim2.fromOffset(px(hp.X), px(hp.Y))
+		else
+			o.Dot.Visible = false
+		end
+	else
+		o.Dot.Visible = false
+	end
+
+	if Settings.Tracers then
+		local p1
+		if Settings.TracerOrigin == 1 then p1 = Vector2.new(vp.X / 2, vp.Y)
+		elseif Settings.TracerOrigin == 2 then p1 = vp / 2
+		else p1 = getAimOrigin() end
+		local p2 = Vector2.new(center.X, center.Y)
+		local d = p2 - p1
+		local len = d.Magnitude
+		if len > 2 then
+			o.Tracer.Visible = true
+			o.Tracer.BackgroundColor3 = color
+			o.Tracer.Size = UDim2.fromOffset(len, 1.5)
+			o.Tracer.Position = UDim2.fromOffset((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2)
+			o.Tracer.Rotation = math.deg(math.atan2(d.Y, d.X))
+		else
+			o.Tracer.Visible = false
+		end
+	else
+		o.Tracer.Visible = false
+	end
+end
+
+local espPool = {}
+local espSelAt = -1
+local espWasOn = false
+local function espLess(a, b) return a.D < b.D end
+
+local function updateEsp(now)
+	if not Settings.ESP then
+		if espWasOn then
+			espWasOn = false
+			for _, o in pairs(espObjs) do hideEsp(o) end
+		end
+		return
+	end
+	espWasOn = true
+	local camPos = Camera.CFrame.Position
+	if now - espSelAt >= 0.1 then
+		espSelAt = now
+		local maxD = Settings.ESPMaxDist
+		table.clear(espSel)
+		local n = 0
+		for _, t in ipairs(getTargets("esp")) do
+			local d = (t.Root.Position - camPos).Magnitude
+			if maxD == 0 or d <= maxD then
+				n += 1
+				local e = espPool[n]
+				if not e then e = {}; espPool[n] = e end
+				e.T, e.D = t, d
+				espSel[n] = e
+			end
+		end
+		table.sort(espSel, espLess)
+	end
+	local vp = Camera.ViewportSize
+	for i = 1, math.min(#espSel, Settings.ESPMaxTargets) do
+		local t = espSel[i].T
+		if t.Model.Parent and t.Root.Parent then
+			local o = espObjs[t.Model]
+			if not o then
+				o = newEsp(t.Model)
+				espObjs[t.Model] = o
+			end
+			o.Seen = now
+			drawEsp(o, t, (t.Root.Position - camPos).Magnitude, now, vp)
+		end
+	end
+	for model, o in pairs(espObjs) do
+		if o.Seen ~= now then
+			hideEsp(o)
+			if now - o.Seen > 3 or not model.Parent then destroyEsp(model, o) end
+		end
+	end
+	updateDroppedGuns(now)
+end
 
 --------------------------------------------------------------------
 -- INTERFACE
@@ -2723,11 +3385,7 @@ accentGradient.Color = ColorSequence.new({
 	ColorSequenceKeypoint.new(1, Theme.Accent),
 })
 accentGradient.Parent = accentLine
-local gradientTween = TweenService:Create(
-	accentGradient,
-	TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-	{ Offset = Vector2.new(0.5, 0) })
-gradientTween:Play()
+TweenService:Create(accentGradient, TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Offset = Vector2.new(0.5, 0) }):Play()
 
 local titleBar = Instance.new("Frame")
 titleBar.Position = UDim2.fromOffset(0, 3)
@@ -2743,7 +3401,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v62"
+title.Text = "Test Toolkit v64"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2939,7 +3597,8 @@ local function newRow(height, className)
 	if r:IsA("TextButton") then
 		r.AutoButtonColor = false
 		r.Text = ""
-	end	corner(r, 8)
+	end
+	corner(r, 8)
 	r.Parent = currentPage
 	return r
 end
@@ -3093,7 +3752,7 @@ local function addCycle(text, key, options, desc, onChange)
 	arrow.TextColor3 = Theme.Accent
 	arrow.Text = ">"
 	arrow.Parent = row
-	local function render() l.Text = text .. ": " .. options[Settings[key] + 1] end
+	local function render() l.Text = text .. ": " .. options[Settings[key]] end
 	render()
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = (Settings[key] % #options) + 1
@@ -3244,418 +3903,6 @@ local function addButton(text, desc, onClick)
 	end)
 end
 
-local function addColorPicker(text, key, desc)
-	local row = newRow(desc and 60 or 50, "TextButton")
-	hover(row)
-	rowLabel(row, text, desc, 60)
-	local preview = Instance.new("Frame")
-	preview.AnchorPoint = Vector2.new(1, 0.5)
-	preview.Position = UDim2.new(1, -12, 0.5, 0)
-	preview.Size = UDim2.fromOffset(44, 26)
-	preview.BackgroundColor3 = Settings[key]
-	preview.BorderSizePixel = 0
-	preview.Parent = row
-	corner(preview, 6)
-	stroke(preview, Color3.new(1, 1, 1), 0.4, 1)
-
-	local rgb = Instance.new("TextLabel")
-	rgb.BackgroundTransparency = 1
-	rgb.AnchorPoint = Vector2.new(1, 1)
-	rgb.Position = UDim2.new(1, -12, 0.5, -18)
-	rgb.Size = UDim2.fromOffset(150, 12)
-	rgb.Font = Enum.Font.Gotham
-	rgb.TextSize = 10
-	rgb.TextColor3 = Theme.SubText
-	rgb.TextXAlignment = Enum.TextXAlignment.Right
-	rgb.Text = string.format("R:%.0f G:%.0f B:%.0f",
-		Settings[key].R * 255, Settings[key].G * 255, Settings[key].B * 255)
-	rgb.Parent = row
-
-	local function update()
-		preview.BackgroundColor3 = Settings[key]
-		rgb.Text = string.format("R:%.0f G:%.0f B:%.0f",
-			Settings[key].R * 255, Settings[key].G * 255, Settings[key].B * 255)
-	end
-
-	row.MouseButton1Click:Connect(function()
-		local presets = {
-			Color3.fromRGB(0, 255, 0), Color3.fromRGB(0, 200, 0), Color3.fromRGB(0, 150, 0),
-			Color3.fromRGB(255, 0, 0), Color3.fromRGB(200, 0, 0), Color3.fromRGB(255, 50, 50),
-			Color3.fromRGB(0, 100, 255), Color3.fromRGB(0, 150, 255), Color3.fromRGB(100, 150, 255),
-			Color3.fromRGB(255, 255, 0), Color3.fromRGB(255, 200, 0), Color3.fromRGB(255, 255, 255),
-		}
-		local cur = Settings[key]
-		local idx = 1
-		for i, c in ipairs(presets) do
-			if math.abs(c.R - cur.R) < 0.01 and math.abs(c.G - cur.G) < 0.01
-				and math.abs(c.B - cur.B) < 0.01 then
-				idx = (i % #presets) + 1
-				break
-			end
-		end
-		Settings[key] = presets[idx]
-		update()
-		notify(text .. " alterado", "info")
-	end)
-
-	table.insert(refreshers, update)
-end
-
---------------------------------------------------------------------
--- PERFORMANCE + FPS
---------------------------------------------------------------------
-local Terrain = Workspace.Terrain
-local perfSaved = setmetatable({}, { __mode = "k" })
-local perfToken = 0
-local perfConns = {}
-local perfQuality = nil
-
-local function perfSet(inst, prop, value)
-	pcall(function()
-		local s = perfSaved[inst]
-		if not s then s = {}; perfSaved[inst] = s end
-		if s[prop] == nil then s[prop] = inst[prop] end
-		inst[prop] = value
-	end)
-end
-
-local function perfInstance(d)
-	if d == Terrain then return end
-	if d:IsA("BasePart") then
-		perfSet(d, "Material", Enum.Material.SmoothPlastic)
-		perfSet(d, "MaterialVariant", "")
-		perfSet(d, "CastShadow", false)
-		perfSet(d, "Reflectance", 0)
-	elseif d:IsA("Light") then
-		perfSet(d, "Enabled", false)
-	elseif d:IsA("PostEffect") or d:IsA("Clouds") then
-		perfSet(d, "Enabled", false)
-	elseif d:IsA("Atmosphere") then
-		perfSet(d, "Density", 0)
-		perfSet(d, "Haze", 0)
-	end
-end
-
-local function perfEnable()
-	perfSet(Terrain, "Decoration", false)
-	perfSet(Terrain, "WaterWaveSize", 0)
-	perfSet(Terrain, "WaterWaveSpeed", 0)
-	perfSet(Terrain, "WaterReflectance", 0)
-	pcall(function()
-		local r = settings().Rendering
-		perfQuality = perfQuality or r.QualityLevel
-		r.QualityLevel = Enum.QualityLevel.Level01
-	end)
-	perfSet(Lit, "GlobalShadows", false)
-	perfSet(Lit, "Brightness", 0)
-	perfSet(Lit, "Ambient", Color3.fromRGB(190, 190, 190))
-	perfSet(Lit, "OutdoorAmbient", Color3.fromRGB(190, 190, 190))
-	perfSet(Lit, "ShadowSoftness", 0)
-	perfSet(Lit, "EnvironmentDiffuseScale", 0)
-	perfSet(Lit, "EnvironmentSpecularScale", 0)
-	for _, d in ipairs(Lit:GetDescendants()) do perfInstance(d) end
-	perfConns[1] = Lit.DescendantAdded:Connect(perfInstance)
-	perfConns[2] = Workspace.DescendantAdded:Connect(perfInstance)
-	local token = perfToken
-	task.spawn(function()
-		local n = 0
-		for _, d in ipairs(Workspace:GetDescendants()) do
-			if token ~= perfToken then return end
-			perfInstance(d)
-			n += 1
-			if n % 400 == 0 then task.wait() end
-		end
-	end)
-end
-
-local function perfDisable()
-	for _, c in ipairs(perfConns) do c:Disconnect() end
-	table.clear(perfConns)
-	for inst, props in pairs(perfSaved) do
-		if inst.Parent then
-			for prop, value in pairs(props) do
-				pcall(function() inst[prop] = value end)
-			end
-		end
-		perfSaved[inst] = nil
-	end
-	if perfQuality then
-		pcall(function() settings().Rendering.QualityLevel = perfQuality end)
-		perfQuality = nil
-	end
-end
-
-local function applyPerformance()
-	perfToken += 1
-	if Settings.PerfMode then perfEnable() else perfDisable() end
-end
-
-local lastFps = 60
-
-local function lookupGlobal(name)
-	local sources = {
-		function() return getgenv()[name] end,
-		function() return _G[name] end,
-	}
-	for _, f in ipairs(sources) do
-		local ok, v = pcall(f)
-		if ok and type(v) == "function" then return v end
-	end
-	return nil
-end
-
-local function fpsMethodList()
-	local list = {}
-	for _, n in ipairs({ "setfpscap", "set_fps_cap", "setfps" }) do
-		local fn = lookupGlobal(n)
-		if fn then list[#list + 1] = { name = n, fn = fn } end
-	end
-	local okSyn, syn = pcall(function() return getgenv().syn end)
-	if okSyn and type(syn) == "table" and type(syn.set_fps_cap) == "function" then
-		list[#list + 1] = { name = "syn.set_fps_cap", fn = syn.set_fps_cap }
-	end
-	local sf = lookupGlobal("setfflag")
-	if sf then
-		list[#list + 1] = { name = "setfflag", fn = function(c)
-			sf("DFIntTaskSchedulerTargetFps", tostring(c))
-		end }
-	end
-	list[#list + 1] = { name = "FramerateCap", fn = function(c)
-		UserSettings():GetService("UserGameSettings").FramerateCap = c
-	end }
-	return list
-end
-
-local fpsMethod = nil
-local fpsBusy = false
-
-local function fpsValue(cap)
-	if Settings.FPSUnlock and fpsMethod and fpsMethod.zero then return 0 end
-	return cap
-end
-
-local function applyFps(explicit)
-	if not Settings.FPSUnlock and not explicit then return end
-	local cap = Settings.FPSUnlock and Settings.FPSCap or 60
-	if fpsMethod then
-		pcall(fpsMethod.fn, fpsValue(cap))
-		if explicit then
-			notify("Limite de FPS: " .. cap .. " (" .. fpsMethod.name .. ")", "info")
-		end
-		return
-	end
-	if fpsBusy then return end
-	local list = fpsMethodList()
-	if #list == 0 then
-		if Settings.FPSUnlock then
-			Settings.FPSUnlock = false
-			for _, refresh in ipairs(refreshers) do refresh() end
-			notify("FPS: este executor não tem função de limite", "off")
-		end
-		return
-	end
-	fpsBusy = true
-	task.spawn(function()
-		local fallback = nil
-		for _, m in ipairs(list) do
-			for _, zero in ipairs({ false, true }) do
-				local value = (zero and Settings.FPSUnlock) and 0 or cap
-				if pcall(m.fn, value) then
-					fallback = fallback or { name = m.name, fn = m.fn, zero = false }
-					if cap <= 60 or not Settings.FPSUnlock then
-						fpsMethod = fallback
-						fpsBusy = false
-						if explicit then
-							notify("Limite de FPS: " .. cap .. " (" .. m.name .. ")", "info")
-						end
-						return
-					end
-					task.wait(1.5)
-					if lastFps > 65 then
-						fpsMethod = { name = m.name, fn = m.fn, zero = zero }
-						fpsBusy = false
-						notify("FPS desbloqueado via " .. m.name .. (zero and " (sem limite)" or ""), "on")
-						return
-					end
-				end
-			end
-		end
-		fpsBusy = false
-		if fallback then
-			fpsMethod = fallback
-			notify("Limite aplicado, mas FPS não passou de " .. math.floor(lastFps), "off")
-		end
-	end)
-end
-
-task.spawn(function()
-	while true do
-		task.wait(2)
-		if Settings.FPSUnlock then applyFps() end
-	end
-end)
-
---------------------------------------------------------------------
--- EQUIPE AUX
---------------------------------------------------------------------
-local function resetAimCaches()
-	currentTarget = nil
-	table.clear(targetCache)
-	table.clear(teamCache)
-	myTeamAt = -1
-	candTime = -1
-	MM2.clearCache()
-end
-
-local function markCurrentAsAlly()
-	local model = currentTarget and currentTarget.Model
-	if not model and lastLocked and lastLocked.Parent and os.clock() - lastLockedAt < 15 then
-		model = lastLocked
-	end
-	if not model then
-		local myRoot = getLocalRoot()
-		local bd = math.huge
-		if myRoot then
-			for _, t in ipairs(getTargets("esp")) do
-				local d = (t.Root.Position - myRoot.Position).Magnitude
-				if d < bd and not manualAllies[t.Player or t.Model] then
-					model, bd = t.Model, d
-				end
-			end
-		end
-	end
-	if not model then
-		notify("Nenhum alvo para marcar", "off")
-		return
-	end
-	local plr = Players:GetPlayerFromCharacter(model)
-	manualAllies[plr or model] = true
-	resetAimCaches()
-	notify("Aliado marcado: " .. (plr and plr.DisplayName or model.Name), "on")
-end
-
-local function clearManualAllies()
-	for k in pairs(manualAllies) do manualAllies[k] = nil end
-	resetAimCaches()
-	notify("Aliados manuais limpos", "info")
-end
-
-local function teamDiagnostic()
-	local mine = getTeamKey(LocalPlayer.Character, LocalPlayer)
-	notify("Eu: " .. (mine and mine:sub(3) or "sem equipe detectada"), "info")
-	local myRoot = getLocalRoot()
-	local best, bd = nil, math.huge
-	if myRoot then
-		for model, hum in pairs(humanoids) do
-			if model ~= LocalPlayer.Character and hum.Health > 0 then
-				local r = getRoot(model)
-				if r then
-					local d = (r.Position - myRoot.Position).Magnitude
-					if d < bd then best, bd = model, d end
-				end
-			end
-		end
-	end
-	if best then
-		local plr = Players:GetPlayerFromCharacter(best)
-		local k = getTeamKey(best, plr)
-		notify(best.Name .. ": " .. (k and k:sub(3) or "sem equipe")
-			.. (isTeammate(best, plr) and " (aliado)" or " (inimigo)"), "info")
-	else
-		notify("Nenhum jogador/bot por perto", "off")
-	end
-end
-
---------------------------------------------------------------------
--- CONFIG + SPECTATE
---------------------------------------------------------------------
-local function saveConfig()
-	local ok = pcall(function()
-		if not writefile then error("sem writefile") end
-		writefile(CONFIG_FILE, HttpService:JSONEncode(serializeSettings()))
-	end)
-	notify(ok and "Configuração salva" or "Salvar indisponível", ok and "on" or "off")
-end
-
-local function deleteConfig()
-	local ok = pcall(function()
-		if delfile and isfile and isfile(CONFIG_FILE) then delfile(CONFIG_FILE)
-		else error("nada para apagar") end
-	end)
-	notify(ok and "Configuração apagada" or "Nada para apagar", ok and "info" or "off")
-end
-
-local spectateIdx = 0
-
-local function stopSpectate()
-	if not spectating then return end
-	spectating = false
-	local hum = getLocalHumanoid()
-	if hum then Camera.CameraSubject = hum end
-	notify("Observação parada", "off")
-end
-
-local function spectateNext()
-	local list = {}
-	for model, hum in pairs(humanoids) do
-		if model ~= LocalPlayer.Character and hum.Health > 0 and model.Parent then
-			list[#list + 1] = model
-		end
-	end
-	table.sort(list, function(a, b) return a.Name < b.Name end)
-	if #list == 0 then notify("Ninguém para observar", "off"); return end
-	spectateIdx = (spectateIdx % #list) + 1
-	local m = list[spectateIdx]
-	spectating = true
-	currentTarget = nil
-	Camera.CameraSubject = humanoids[m]
-	local plr = Players:GetPlayerFromCharacter(m)
-	notify("Observando: " .. (plr and plr.DisplayName or m.Name), "info")
-end
-
---------------------------------------------------------------------
--- MENU OPEN/CLOSE
---------------------------------------------------------------------
-local menuOpen = false
-
-local function baseScale()
-	local vp = Camera.ViewportSize
-	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
-end
-
-local function setMenu(open)
-	menuOpen = open
-	local s = baseScale()
-	if open then
-		menu.Visible = true
-		menuScale.Scale = s * 0.94
-		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
-		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
-	else
-		tween(menu, { GroupTransparency = 1 }, 0.16)
-		tween(menuScale, { Scale = s * 0.94 }, 0.16)
-		task.delay(0.18, function()
-			if not menuOpen then menu.Visible = false end
-		end)
-	end
-end
-
-local function toggleMenu() setMenu(not menuOpen) end
-
-closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
-
-local function refreshAll()
-	for _, refresh in ipairs(refreshers) do refresh() end
-end
-
-uiRefresh = refreshAll
-
-local function toggleSetting(key, label)
-	Settings[key] = not Settings[key]
-	refreshAll()
-	notify(label .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
-end
-
 --------------------------------------------------------------------
 -- ABA: MIRA
 --------------------------------------------------------------------
@@ -3663,7 +3910,7 @@ newPage("aim", "Mira")
 
 addSection("Modo de mira")
 addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
-addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente para o alvo", resetAimCaches)
+addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente para o alvo")
 addToggle("Silent Aim", "UseSilentAim", "Redireciona o tiro pro alvo sem mexer na câmera")
 addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" },
 	"Segurar/alternar pela tecla da mira; Automático = sempre", function() aimActive = false end)
@@ -3671,9 +3918,8 @@ addCycle("Parte do corpo", "AimPart", { "Cabeça", "Corpo", "Automático" },
 	"Automático mira a parte visível mais perto do cursor")
 addCycle("Prioridade", "Priority", { "Perto do cursor", "Perto de mim", "Menos vida" },
 	"Qual inimigo é escolhido primeiro")
-addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" },
-	"Quem a mira e o ESP consideram alvo")
-addToggle("Ignorar equipe", "TeamCheck", "Não mira em aliados", resetAimCaches)
+addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem é considerado alvo")
+addToggle("Ignorar equipe", "TeamCheck", "Não mira em aliados")
 addToggle("Checar parede", "AimWallCheck", "Só mira em quem você enxerga")
 
 addSection("Legit Aim")
@@ -3690,12 +3936,11 @@ addSection("Trigger Bot")
 addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente quando o alvo está sob a mira")
 addToggle("Sempre ativo", "TriggerBotAlways", "Atira mesmo sem segurar a tecla da mira")
 addToggle("Só alvos visíveis", "TriggerVisible", "Só atira se tiver linha de visão")
-addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = bolinha no centro, 400 = círculo grande")
-addSlider("Delay entre tiros", "TriggerDelay", 0.01, 1, 0.01, 2, "Tempo mínimo entre cada tiro")
+addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = bolinha no centro")
+addSlider("Delay entre tiros", "TriggerDelay", 0.01, 1, 0.01, 2, "Tempo mínimo entre tiros")
 
 addSection("Tiro e previsão")
-addCycle("Tipo de tiro", "ShotType", { "Instantâneo", "Projétil", "Automático" },
-	"Instantâneo = metade do ping; Projétil = prevê voo")
+addCycle("Tipo de tiro", "ShotType", { "Instantâneo", "Projétil", "Automático" }, "Método de previsão")
 addToggle("Previsão automática", "AutoPredict", "Compensa ping e movimento")
 addSlider("Força da previsão", "PredictScale", 0, 2, 0.05, 2, "Ajuste fino")
 addSlider("Compensação manual", "Prediction", 0, 0.5, 0.01, 2, "Segundos à frente")
@@ -3710,17 +3955,6 @@ table.insert(keybindRows, addSection("Teclas (PC)"))
 addKeybind("Tecla da mira", "AimKey", "Botão que ativa a mira", true)
 addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
 
-addSection("Equipe e observação")
-addButton("Marcar alvo como aliado", "Mira e ESP ignoram", markCurrentAsAlly)
-addButton("Limpar aliados marcados", "Remove marcações", clearManualAllies)
-addButton("Diagnóstico de equipe", "Mostra equipes", teamDiagnostic)
-addButton("Observar próximo", "Câmera segue outro", spectateNext)
-addButton("Parar de observar", "Volta câmera", stopSpectate)
-
-addSection("Aviso")
-addInfo("Legit Aim = seguro. Silent = detectável. Hitbox = muito detectável. "
-	.. "Use só em servidor privado seu.", 60)
-
 --------------------------------------------------------------------
 -- ABA: HITBOX
 --------------------------------------------------------------------
@@ -3728,25 +3962,19 @@ newPage("hitbox", "Hitbox")
 
 addSection("Hitbox Expander")
 addToggle("Hitbox Expander", "HitboxExpander", "Aumenta a hitbox dos players próximos", function()
-	if not Settings.HitboxExpander then
-		pcall(HitboxExpander.restoreAll)
-	end
+	if not Settings.HitboxExpander then pcall(HitboxExpander.restoreAll) end
 end)
 addToggle("Invisível (não muda visual)", "HitboxInvisible", "Hitbox fica transparente")
 addToggle("Checar parede", "HitboxWallCheck", "Só expande alvos visíveis")
 addToggle("Ignorar aliados", "HitboxIgnoreAllies", "Não expande aliados")
 addSlider("Tamanho da hitbox", "HitboxSize", 5, 30, 1, 0, "Tamanho em studs")
-addSlider("Alcance da hitbox", "HitboxRange", 10, 1000, 10, 0, "Distância máxima para expandir")
+addSlider("Alcance da hitbox", "HitboxRange", 10, 1000, 10, 0, "Distância máxima")
 
 addSection("Partes para expandir")
 addToggle("Cabeça (Head)", "ExpandHead", "Expande a cabeça")
 addToggle("Torso (R6)", "ExpandTorso", "Expande o Torso (R6)")
 addToggle("UpperTorso (R15)", "ExpandUpperTorso", "Expande o UpperTorso (R15)")
 addToggle("LowerTorso (R15)", "ExpandLowerTorso", "Expande o LowerTorso (R15)")
-addInfo("HumanoidRootPart nunca é expandido — evita puxão de física", 20)
-
-addSection("Aviso")
-addInfo("Hitbox é MUITO detectável. Use somente em servidor privado seu.", 40)
 
 --------------------------------------------------------------------
 -- ABA: ESP
@@ -3775,96 +4003,88 @@ addSlider("Máx. de alvos", "ESPMaxTargets", 1, 30, 1, 0, "Menos = mais FPS")
 addSlider("Transparência do preenchimento", "ESPFillTrans", 0, 1, 0.05, 2, "0 = sólido")
 
 --------------------------------------------------------------------
--- ABA: MM2 (só aparece no Murder Mystery 2)
+-- ABA: MM2 (Mario Hub logic)
 --------------------------------------------------------------------
-newPage("mm2", "MM2")
+if IS_MM2 then
+	newPage("mm2", "MM2")
 
-addSection("Murder Mystery 2")
-addInfo("Modo MM2 ativo. Detecta funções por ferramentas: FACAA = Murder, "
-	.. "ARMA = Sheriff, resto = Inocente. Se a detecção estiver errada, "
-	.. "use Forçar função abaixo.", 70)
+	addSection("Modo MM2")
+	addInfo("Detecção via RemoteFunction GetCurrentPlayerData (igual ao Mario Hub). "
+		.. "ESP com cores oficiais: Murder=vermelho, Sheriff=azul, Hero=amarelo, Inocente=verde.", 50)
+	addToggle("Ativar modo MM2", "MM2Mode", "Ativa as funções MM2")
+	addToggle("ESP de roles", "MM2EspPlayers", "Mostra Murder/Sheriff/Hero/Inocente coloridos")
+	addToggle("Gun Drop ESP", "MM2EspGun", "Mostra a arma dropada em laranja")
 
-addToggle("Ativar modo MM2", "MM2Mode", "Colore jogadores por função")
-addToggle("Mira inteligente MM2", "MM2SmartAim",
-	"Inocente→Murder, Murder→Todos, Sheriff→Murder")
-addToggle("Nome do Murder sempre visível", "MM2AlwaysShowMurderName",
-	"Prioriza o nome do Murder mesmo se ESP de nomes estiver off")
-
-addSection("Forçar função (se detecção erra)")
-addCycle("Forçar função", "MM2ForceRole",
-	{ "Automático", "Inocente", "Murder", "Sheriff" },
-	"Use se o script errar sua função", function()
-		MM2.clearCache()
-		resetAimCaches()
+	addSection("Sheriff / Hero")
+	addToggle("Silent Aim", "MM2SilentAim", "Todo tiro vai no Murder (hook namecall)", function()
+		MM2Hook.SyncAimHook()
+	end)
+	addToggle("Auto Shoot Murderer", "MM2AutoShootMurderer", "Atira no Murder assim que pegar a arma")
+	addButton("Shoot Murderer Now", "Atira no Murder agora", function()
+		task.spawn(function()
+			local ok, detail = Sheriff.ShootMurderer()
+			notify(ok and ("Atirou em " .. tostring(detail)) or tostring(detail or "Sem arma"), ok and "on" or "off")
+		end)
+	end)
+	addToggle("Auto Grab Gun", "MM2AutoGrabGun", "Pega a arma dropada automaticamente")
+	addButton("Grab Gun Now", "Pega a arma dropada agora", function()
+		task.spawn(function()
+			local got = Sheriff.GrabGun()
+			notify(got and "Arma pega" or "Sem arma no chão", got and "on" or "off")
+		end)
 	end)
 
-addSection("ESP")
-addColorPicker("Cor do Inocente", "MM2InnocentColor", "Verde por padrão")
-addColorPicker("Cor do Murder", "MM2MurderColor", "Vermelho por padrão")
-addColorPicker("Cor do Sheriff", "MM2SheriffColor", "Azul por padrão")
+	addSection("Murderer")
+	addToggle("Auto Kill All", "MM2AutoKillAll", "Mata todos automaticamente")
+	addButton("Kill All Now", "Mata todos agora", function()
+		task.spawn(function()
+			local kills = Murderer.KillAll()
+			notify("Matou " .. kills .. " players", kills > 0 and "on" or "off")
+		end)
+	end)
+	addToggle("Kill Aura", "MM2KillAura", "Mata quem chegar perto")
+	addToggle("Knife Throw Aim", "MM2KnifeThrownAim", "Faca lançada vai no player mais próximo", function()
+		MM2Hook.SyncAimHook()
+	end)
 
-addSection("Arma dropada")
-addToggle("Destacar arma dropada", "MM2ShowDroppedGun", "Mostra a arma no chão em amarelo")
-addColorPicker("Cor da arma dropada", "MM2DroppedGunColor", "Amarelo por padrão")
+	addSection("Auto Play")
+	addToggle("Auto Win (Kaitun)", "MM2AutoWin", "Joga a rodada por você em qualquer role")
+	addToggle("Auto Dodge", "MM2AutoDodge", "Foge do Murder quando ele chega perto")
 
-addSection("Grab Gun (só funciona se for Inocente)")
-addInfo("⚠ Só o Inocente consegue pegar a arma dropada. Se você for Murder ou Sheriff, "
-	.. "estas opções não funcionam.", 40)
-addButton("Grab Gun Dropped", "Pega a arma dropada mais próxima", function()
-	GrabGun.grabNearest()
-end)
-addToggle("Auto Grab Gun Dropped", "MM2AutoGrabGun",
-	"Pega automaticamente quando uma arma aparece")
-addSlider("Alcance do Grab", "MM2GrabRange", 10, 500, 10, 0, "Studs")
+	addSection("Coin Farm (estilo Mario Hub)")
+	addToggle("Auto Farm Coins", "CoinFarmEnabled", "Coleta todas as moedas automaticamente")
+	addSlider("Farm Speed", "CoinFarmSpeed", 16, 28, 1, 0, "Velocidade do farm")
+	addToggle("Reset When Bag Full", "CoinFarmResetWhenFull", "Morre e respawna quando encher")
 
-addSection("Status")
-local mm2Status = addInfo("Aguardando...", 66)
+	addSection("Status")
+	local mm2Status = addInfo("Aguardando...", 80)
 
-table.insert(refreshers, function()
-	pcall(function()
-		if mm2Status and mm2Status.Parent then
+	table.insert(refreshers, function()
+		pcall(function()
+			if not mm2Status or not mm2Status.Parent then return end
+			MM2Lib.RefreshRoles()
 			local murd, sher, inno = 0, 0, 0
 			if humanoids then
 				for model, hum in pairs(humanoids) do
 					if hum and hum.Parent and hum.Health > 0 then
 						local plr = Players:GetPlayerFromCharacter(model)
-						local role = MM2.getRole(model, plr)
-						if role == "murder" then murd += 1
-						elseif role == "sheriff" then sher += 1
-						elseif role == "innocent" then inno += 1 end
+						if plr then
+							local r = MM2Lib.RoleOf(plr)
+							if r == "Murderer" then murd += 1
+							elseif r == "Sheriff" or r == "Hero" then sher += 1
+							elseif r == "Innocent" then inno += 1 end
+						end
 					end
 				end
 			end
-
-			local drops = 0
-			local okDrops, d = pcall(function() return #MM2.getDroppedGuns() end)
-			if okDrops and type(d) == "number" then drops = d end
-
-			local myRole = MM2.getMyRole()
-			local myRoleText = "?"
-			if myRole == "innocent" then myRoleText = "INOCENTE"
-			elseif myRole == "murder" then myRoleText = "MURDER"
-			elseif myRole == "sheriff" then myRoleText = "SHERIFF" end
-
-			local smartTargets = ""
-			if Settings.MM2SmartAim then
-				if myRole == "innocent" or myRole == "sheriff" then
-					smartTargets = " (mirando só em Murder)"
-				elseif myRole == "murder" then
-					smartTargets = " (mirando em todos)"
-				else
-					smartTargets = " (função não detectada)"
-				end
-			end
-
+			local myRole = MM2Lib.RoleOf(LocalPlayer)
+			local bag = string.format("%d/%d", MM2State.Bag.Current or 0, MM2State.Bag.Max or 0)
 			mm2Status.Text = string.format(
-				"Você é: %s%s\nMurder: %d | Sheriff: %d | Inocente: %d | Armas dropadas: %d",
-				tostring(myRoleText), tostring(smartTargets),
-				tonumber(murd) or 0, tonumber(sher) or 0,
-				tonumber(inno) or 0, tonumber(drops) or 0)
-		end
+				"Você é: %s\nMurder: %d | Sheriff/Hero: %d | Inocente: %d\nMochila: %s",
+				tostring(myRole or "?"), murd, sher, inno, bag)
+		end)
 	end)
-end)
+end
 
 --------------------------------------------------------------------
 -- ABA: JOGADOR
@@ -3888,26 +4108,20 @@ addKeybind("Tecla do voo", "FlyKey", "Liga/desliga voo")
 addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 
 addSection("Invisibilidade (Seat Bug)")
-addInfo("⚠ Usa bug do Seat pra te tirar da sincronia do servidor. "
-	.. "Funciona em jogos sem validação de posição server-side.", 60)
-addToggle("Invisível (Seat Bug)", "SeatInvisible",
-	"Ativa a invisibilidade via bug do Seat", function()
-		pcall(SeatInvisible.toggle)
-	end)
-addButton("Auto-detectar coordenadas", "Procura um lugar seguro no mapa", function()
+addToggle("Invisível (Seat Bug)", "SeatInvisible", "Ativa a invisibilidade via Seat Bug", function()
+	pcall(SeatInvisible.toggle)
+end)
+addButton("Auto-detectar coordenadas", "Procura um lugar seguro", function()
 	local pos = SeatInvisible.findSafeCoords()
 	Settings.SeatInvisibleX = math.floor(pos.X)
 	Settings.SeatInvisibleY = math.floor(pos.Y)
 	Settings.SeatInvisibleZ = math.floor(pos.Z)
 	if uiRefresh then uiRefresh() end
-	notify("Coordenadas: " .. math.floor(pos.X) .. ", "
-		.. math.floor(pos.Y) .. ", " .. math.floor(pos.Z), "on")
+	notify("Coordenadas detectadas", "on")
 end)
 addSlider("Coord X", "SeatInvisibleX", -10000, 10000, 1, 0, "Posição X")
 addSlider("Coord Y", "SeatInvisibleY", -500, 5000, 1, 0, "Posição Y")
 addSlider("Coord Z", "SeatInvisibleZ", -10000, 10000, 1, 0, "Posição Z")
-addSlider("Duração (0 = infinito)", "SeatInvisibleDuration", 0, 300, 1, 0, "Segundos")
-addToggle("Voltar ao desligar", "SeatInvisibleReturn", "Retorna pra posição original")
 
 --------------------------------------------------------------------
 -- ABA: EXTRAS
@@ -3934,38 +4148,44 @@ addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido",
 	if menuOpen then menu.GroupTransparency = Settings.MenuAlpha end
 end)
 
-addSection("Desempenho")
-addToggle("Modo desempenho", "PerfMode", "Gráficos mínimos", applyPerformance)
-addToggle("Desbloquear FPS", "FPSUnlock", "Tira limite 60", function() applyFps(true) end)
-addSlider("Limite de FPS", "FPSCap", 60, 10000, 10, 0, "Com desbloqueio ligado", function() applyFps() end)
-
 addSection("Configuração")
-addButton("Salvar configuração", "Guarda as opções", saveConfig)
-addButton("Apagar configuração", "Volta ao padrão", deleteConfig)
+addButton("Salvar configuração", "Guarda as opções", function()
+	local ok = pcall(function()
+		if not writefile then error("sem writefile") end
+		writefile(CONFIG_FILE, HttpService:JSONEncode(serializeSettings()))
+	end)
+	notify(ok and "Salvo" or "Não disponível", ok and "on" or "off")
+end)
+addButton("Apagar configuração", "Volta ao padrão", function()
+	local ok = pcall(function()
+		if delfile and isfile and isfile(CONFIG_FILE) then delfile(CONFIG_FILE)
+		else error("nada") end
+	end)
+	notify(ok and "Apagado" or "Nada para apagar", ok and "info" or "off")
+end)
 
 --------------------------------------------------------------------
--- ABA: FLING
+-- ABA: FLING (Bots + Players)
 --------------------------------------------------------------------
 newPage("fling", "Fling")
 
-addSection("Fling")
-addToggle("Fling ativo", "Fling", "Arremessa BOTS (players não funciona em jogos modernos)")
-addCycle("Modo de alvo", "FlingMode", { "Todos perto", "Alvo da mira", "Mais próximo" },
-	"Qual bot é arremessado")
-addCycle("Tipo de arremesso", "FlingMode2", { "Empurrar (leve)", "Mandar pro void" },
-	"Empurrar: voa e pode sobreviver. Void: morre ao cair")
-
-addSection("Ajuste")
-addSlider("Alcance", "FlingRange", 3, 30, 1, 0, "Studs")
-addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Empurrar: distância. Void: ignora")
+addSection("Fling Bots")
+addToggle("Fling Bots", "Fling", "Arremessa bots próximos")
+addCycle("Modo de alvo", "FlingMode", { "Todos perto", "Alvo da mira", "Mais próximo" }, "Qual bot é arremessado")
+addCycle("Tipo de arremesso", "FlingMode2", { "Empurrar (leve)", "Mandar pro void" }, "Tipo do arremesso")
+addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
+addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Empurrar: distância")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Tempo entre aplicações")
+
+addSection("Fling Players (universal - estilo Mario Hub)")
+addInfo("Arremessa players de verdade (funciona em qualquer jogo). "
+	.. "Usa BodyAngularVelocity + noclip temporário para prender no alvo.", 50)
+addToggle("Fling Players", "FlingPlayers", "Habilita arremesso em players")
+addCycle("Modo", "FlingPlayerMode", { "Mais próximo", "Alvo da mira", "Todos no alcance" }, "Quem é arremessado")
+addSlider("Alcance (players)", "FlingPlayerRange", 5, 200, 5, 0, "Studs")
 
 table.insert(keybindRows, addSection("Teclas (PC)"))
 addKeybind("Tecla do Fling", "FlingKey", "Liga/desliga Fling (padrão G)")
-
-addSection("Dicas")
-addInfo("Fling SÓ funciona em BOTS. Em players é impossível sem arremessar você junto. "
-	.. "Desligue o AntiFling ao usar.", 70)
 
 --------------------------------------------------------------------
 -- ABA: SEGURANÇA
@@ -3977,31 +4197,19 @@ local secStatus = addInfo("Carregando estado...", 44)
 
 addSection("Proteção contra morte")
 addToggle("Anti Void", "AntiVoid", "Volta à última posição segura se cair no vazio")
-addToggle("Anti Kill", "AntiKill", "Não deixa morrer ao sair do mapa / cair no vazio")
-addSlider("Folga do Anti Kill", "AntiKillMargin", 0, 1000, 25, 0,
-	"Distância além da borda do mapa; 0 = só vazio")
+addToggle("Anti Kill", "AntiKill", "Não deixa morrer ao sair do mapa")
+addSlider("Folga do Anti Kill", "AntiKillMargin", 0, 1000, 25, 0, "Distância além da borda")
 addButton("Recalcular limites do mapa", "Use depois que o mapa mudar", function()
 	AntiKill.recalc()
 end)
 
 addSection("Proteção contra arremesso")
-addToggle("Anti Fling", "AntiFling", "Bloqueia arremessos e colisão de outros")
-addToggle("Voltar ao ponto estável", "AntiFlingRestore", "Após um arremesso, retorna onde estava")
-addSlider("Limite do Anti Fling", "AntiFlingSpeed", 50, 500, 10, 0,
-	"Velocidade que conta como arremesso")
+addToggle("Anti Fling", "AntiFling", "Bloqueia arremessos")
+addToggle("Voltar ao ponto estável", "AntiFlingRestore", "Após um arremesso, retorna")
+addSlider("Limite do Anti Fling", "AntiFlingSpeed", 50, 500, 10, 0, "Velocidade que conta como arremesso")
 
 addSection("Proteção contra kick")
 addToggle("Anti AFK", "AntiAFK", "Evita ser expulso por inatividade")
-
-addSection("Movimento seguro")
-addToggle("Velocidade segura (auto)", "WalkAutoLimit",
-	"Se o jogo te puxar de volta, baixa a velocidade")
-addToggle("Voo seguro (auto)", "FlyAutoLimit",
-	"Se o jogo te puxar de volta, baixa a velocidade do voo")
-
-addSection("Recomendado")
-addInfo("Para fling em bots: desligue 'Anti Fling'. "
-	.. "Para uso normal: ligue tudo. Anti Kill + Anti Void protegem contra morte por queda.", 70)
 
 table.insert(refreshers, function()
 	if secStatus and secStatus.Parent then
@@ -4011,7 +4219,7 @@ table.insert(refreshers, function()
 		if Settings.AntiFling then parts[#parts + 1] = "AntiFling" end
 		if Settings.AntiAFK then parts[#parts + 1] = "AntiAFK" end
 		secStatus.Text = #parts == 0
-			and "Nenhuma proteção ativa — use os toggles abaixo"
+			and "Nenhuma proteção ativa"
 			or ("Ativas: " .. table.concat(parts, ", "))
 	end
 end)
@@ -4030,7 +4238,7 @@ addToggle("Botão ESP", "ShowBtnEsp", "Liga/desliga ESP")
 addToggle("Botão LINHA", "ShowBtnTrace", "Liga/desliga tracers")
 addToggle("Botão PULO", "ShowBtnInf", "Liga/desliga InfJump")
 addToggle("Botão FLING", "ShowBtnFling", "Liga/desliga Fling")
-addToggle("Botão GRAB GUN", "ShowBtnGrabGun", "Pega a arma dropada (só Inocente)")
+addToggle("Botão GRAB GUN", "ShowBtnGrabGun", "Pega a arma dropada")
 
 addSection("Aparência")
 addToggle("Editar posições", "MobileEdit", "Arraste os botões")
@@ -4119,7 +4327,7 @@ makeMobileBtn("PULO", UDim2.fromScale(0.9, 0.78), "ShowBtnInf", function() retur
 makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() return Settings.Fling end,
 	function() toggleSetting("Fling", "Fling") end)
 makeMobileBtn("GRAB", UDim2.fromScale(0.7, 0.42), "ShowBtnGrabGun", function() return false end,
-	function() GrabGun.grabNearest() end)
+	function() task.spawn(function() Sheriff.GrabGun() end) end)
 
 local mobileShown = false
 local function updateMobileBtns()
@@ -4145,8 +4353,8 @@ end
 
 local function applyDeviceLayout()
 	for _, r in ipairs(keybindRows) do r.Visible = not isMobile end
-	subtitle.Text = isMobile and "Botão TT abre/fecha  •  arraste aqui para mover"
-		or "Ctrl direito abre/fecha  •  arraste aqui para mover"
+	subtitle.Text = isMobile and "Botão TT abre/fecha  •  arraste para mover"
+		or "Ctrl direito abre/fecha  •  arraste para mover"
 	layoutTabs()
 	if not isMobile and activeTab == "buttons" then selectTab("aim") end
 	if not IS_MM2 and activeTab == "mm2" then selectTab("aim") end
@@ -4209,7 +4417,7 @@ UserInputService.InputBegan:Connect(function(input)
 	elseif input.KeyCode == Settings.FlingKey then
 		toggleSetting("Fling", "Fling")
 	elseif input.KeyCode == Enum.KeyCode.H and IS_MM2 then
-		GrabGun.grabNearest()
+		task.spawn(function() Sheriff.GrabGun() end)
 	end
 end)
 
@@ -4220,379 +4428,46 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 --------------------------------------------------------------------
--- ESP
+-- MENU OPEN/CLOSE
 --------------------------------------------------------------------
-local espRoot = Instance.new("Frame")
-espRoot.Name = "ESP"
-espRoot.Size = UDim2.fromScale(1, 1)
-espRoot.BackgroundTransparency = 1
-espRoot.ZIndex = 1
-espRoot.Parent = gui
+local menuOpen = false
 
-local ALLY_COLOR = Color3.fromRGB(80, 190, 255)
-local espObjs = {}
-local espSel = {}
-
-local function mkFrame(parent, round)
-	local f = Instance.new("Frame")
-	f.BorderSizePixel = 0
-	f.Visible = false
-	f.ZIndex = 1
-	f.Parent = parent
-	if round then corner(f, 9999) end
-	return f
-end
-
-local function mkText(parent, size)
-	local l = Instance.new("TextLabel")
-	l.BackgroundTransparency = 1
-	l.Font = Enum.Font.GothamBold
-	l.TextSize = size
-	l.TextColor3 = Color3.new(1, 1, 1)
-	l.TextStrokeTransparency = 0.35
-	l.Size = UDim2.fromOffset(220, 14)
-	l.Visible = false
-	l.ZIndex = 1
-	l.Parent = parent
-	return l
-end
-
-local function newEsp(model)
-	local o = { Model = model, Seen = 0, H = 5.5, HAt = -1, Tool = "", ToolAt = -1 }
-	local hl = Instance.new("Highlight")
-	hl.Name = "TTHighlight"
-	hl.Adornee = model
-	hl.Enabled = false
-	hl.Parent = gui
-	o.HL = hl
-
-	local holder = Instance.new("Frame")
-	holder.BackgroundTransparency = 1
-	holder.Size = UDim2.fromScale(1, 1)
-	holder.Visible = false
-	holder.ZIndex = 1
-	holder.Parent = espRoot
-	o.Holder = holder
-
-	o.Box = mkFrame(holder)
-	o.Box.BackgroundTransparency = 1
-	o.BoxStroke = stroke(o.Box, Color3.new(1, 1, 1), 0, 1.5)
-	o.Corners = {}
-	for i = 1, 8 do o.Corners[i] = mkFrame(holder) end
-	o.HpBg = mkFrame(holder)
-	o.HpBg.BackgroundColor3 = Color3.new(0, 0, 0)
-	o.HpBg.BackgroundTransparency = 0.4
-	o.HpFill = Instance.new("Frame")
-	o.HpFill.AnchorPoint = Vector2.new(0, 1)
-	o.HpFill.Position = UDim2.fromScale(0, 1)
-	o.HpFill.BorderSizePixel = 0
-	o.HpFill.ZIndex = 1
-	o.HpFill.Parent = o.HpBg
-	o.Name = mkText(holder, 12)
-	o.Name.AnchorPoint = Vector2.new(0.5, 1)
-	o.ToolLbl = mkText(holder, 11)
-	o.ToolLbl.AnchorPoint = Vector2.new(0.5, 0)
-	o.Dot = mkFrame(holder, true)
-	o.Dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	o.Dot.Size = UDim2.fromOffset(6, 6)
-	o.Tracer = mkFrame(holder)
-	o.Tracer.AnchorPoint = Vector2.new(0.5, 0.5)
-	return o
-end
-
-local function hideEsp(o)
-	o.Holder.Visible = false
-	o.HL.Enabled = false
-end
-
-local function destroyEsp(model, o)
-	pcall(function() o.HL:Destroy() end)
-	pcall(function() o.Holder:Destroy() end)
-	espObjs[model] = nil
-end
-
-local droppedEsp = {}
-
-local function makeDropEsp(tool)
-	local hl = Instance.new("Highlight")
-	hl.Name = "TTDropHL"
-	hl.Adornee = tool
-	hl.FillColor = Settings.MM2DroppedGunColor
-	hl.OutlineColor = Settings.MM2DroppedGunColor
-	hl.FillTransparency = 0.3
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = gui
-
-	local name = Instance.new("TextLabel")
-	name.BackgroundTransparency = 1
-	name.Font = Enum.Font.GothamBold
-	name.TextSize = 14
-	name.TextColor3 = Settings.MM2DroppedGunColor
-	name.TextStrokeTransparency = 0.3
-	name.Size = UDim2.fromOffset(160, 18)
-	name.AnchorPoint = Vector2.new(0.5, 1)
-	name.Text = "ARMA DROPADA"
-	name.Visible = true
-	name.ZIndex = 2
-	name.Parent = espRoot
-
-	return { HL = hl, Name = name, Tool = tool }
-end
-
-local function updateDroppedGuns(now)
-	if not Settings.MM2ShowDroppedGun or not Settings.MM2Mode or not IS_MM2 then
-		for tool, o in pairs(droppedEsp) do
-			pcall(function() o.HL:Destroy() end)
-			pcall(function() o.Name:Destroy() end)
-			droppedEsp[tool] = nil
-		end
-		return
-	end
-	local guns = MM2.getDroppedGuns()
-	local seen = {}
-	for _, tool in ipairs(guns) do
-		seen[tool] = true
-		local o = droppedEsp[tool]
-		if not o then
-			o = makeDropEsp(tool)
-			droppedEsp[tool] = o
-		end
-		local handle = tool:FindFirstChild("Handle")
-		if handle and handle:IsA("BasePart") then
-			local sp, on = Camera:WorldToViewportPoint(handle.Position + Vector3.new(0, 2, 0))
-			o.Name.Visible = on
-			if on then
-				o.Name.Position = UDim2.fromOffset(sp.X, sp.Y)
-			end
-			o.HL.FillColor = Settings.MM2DroppedGunColor
-			o.HL.OutlineColor = Settings.MM2DroppedGunColor
-			o.Name.TextColor3 = Settings.MM2DroppedGunColor
-		end
-	end
-	for tool, o in pairs(droppedEsp) do
-		if not seen[tool] then
-			pcall(function() o.HL:Destroy() end)
-			pcall(function() o.Name:Destroy() end)
-			droppedEsp[tool] = nil
-		end
-	end
-end
-
-local function px(v) return math.floor(v + 0.5) end
-
-local function drawEsp(o, t, dist, now, vp)
-	local model = t.Model
-	local color = t.Teammate and ALLY_COLOR
-		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
-	local mm2Role = nil
-	local forceName = false
-
-	if IS_MM2 and Settings.MM2Mode then
-		mm2Role = MM2.getRole(model, t.Player)
-		if mm2Role == "innocent" then color = Settings.MM2InnocentColor
-		elseif mm2Role == "murder" then
-			color = Settings.MM2MurderColor
-			-- Força o nome do Murder a aparecer se a opção estiver ligada
-			if Settings.MM2AlwaysShowMurderName then forceName = true end
-		elseif mm2Role == "sheriff" then color = Settings.MM2SheriffColor
-		end
-	end
-
-	if Settings.ESPHighlight then
-		local hl = o.HL
-		hl.Enabled = true
-		hl.FillColor = color
-		hl.OutlineColor = color
-		hl.FillTransparency = Settings.ESPFillTrans
-		hl.OutlineTransparency = 0
-		hl.DepthMode = Settings.Wallhack and Enum.HighlightDepthMode.AlwaysOnTop
-			or Enum.HighlightDepthMode.Occluded
-	else
-		o.HL.Enabled = false
-	end
-
-	local rootPos = t.Root.Position
-	if now - o.HAt > 0.5 then
-		o.HAt = now
-		local ok, sz = pcall(function() return model:GetExtentsSize() end)
-		if ok and sz.Y > 1 then o.H = sz.Y end
-	end
-	local h = o.H
-	local center = Camera:WorldToViewportPoint(rootPos)
-	if center.Z <= 0 then
-		o.Holder.Visible = false
-		return
-	end
-	local top = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, h * 0.45, 0))
-	local bot = Camera:WorldToViewportPoint(rootPos - Vector3.new(0, h * 0.55, 0))
-	local boxH = math.max(bot.Y - top.Y, 6)
-	local boxW = boxH * 0.55
-	local x, y = px(center.X - boxW / 2), px(top.Y)
-	boxW, boxH = px(boxW), px(boxH)
-
-	o.Holder.Visible = true
-
-	local boxMode = Settings.ESPBox
-	o.Box.Visible = boxMode == 2
-	if boxMode == 2 then
-		o.Box.Position = UDim2.fromOffset(x, y)
-		o.Box.Size = UDim2.fromOffset(boxW, boxH)
-		o.BoxStroke.Color = color
-	end
-	if boxMode == 3 then
-		local L, th = math.max(4, px(boxW * 0.28)), 2
-		local r, b = x + boxW, y + boxH
-		local specs = {
-			{ x, y, L, th }, { x, y, th, L },
-			{ r - L, y, L, th }, { r - th, y, th, L },
-			{ x, b - th, L, th }, { x, b - L, th, L },
-			{ r - L, b - th, L, th }, { r - th, b - L, th, L },
-		}
-		for i = 1, 8 do
-			local f, s = o.Corners[i], specs[i]
-			f.BackgroundColor3 = color
-			f.Position = UDim2.fromOffset(s[1], s[2])
-			f.Size = UDim2.fromOffset(s[3], s[4])
-			f.Visible = true
-		end
-	else
-		for i = 1, 8 do o.Corners[i].Visible = false end
-	end
-
-	if Settings.ShowHealth then
-		local hum = t.Humanoid
-		local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-		o.HpBg.Visible = true
-		o.HpBg.Position = UDim2.fromOffset(x - 6, y)
-		o.HpBg.Size = UDim2.fromOffset(3, boxH)
-		o.HpFill.Size = UDim2.new(1, 0, frac, 0)
-		o.HpFill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.9, 1)
-	else
-		o.HpBg.Visible = false
-	end
-
-	-- Nome: mostra se ShowNames estiver on OU se for murder com forceName
-	if Settings.ShowNames or forceName then
-		local plr = t.Player
-		local roleTag = ""
-		if mm2Role then
-			if mm2Role == "innocent" then roleTag = " [INOCENTE]"
-			elseif mm2Role == "murder" then roleTag = " [MURDER]"
-			elseif mm2Role == "sheriff" then roleTag = " [SHERIFF]" end
-		end
-		o.Name.Visible = true
-		o.Name.Text = (plr and plr.DisplayName or model.Name) .. roleTag
-			.. "  [" .. math.floor(dist) .. "m]"
-		o.Name.TextColor3 = color
-		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
-		-- Garante que o nome fique acima do Highlight (ZIndex)
-		o.Name.ZIndex = 5
-	else
-		o.Name.Visible = false
-	end
-
-	if Settings.ESPTool then
-		if now - o.ToolAt > 0.5 then
-			o.ToolAt = now
-			local tool = model:FindFirstChildOfClass("Tool")
-			o.Tool = tool and tool.Name or ""
-		end
-		o.ToolLbl.Visible = o.Tool ~= ""
-		o.ToolLbl.Text = o.Tool
-		o.ToolLbl.Position = UDim2.fromOffset(px(center.X), y + boxH + 2)
-	else
-		o.ToolLbl.Visible = false
-	end
-
-	if Settings.ESPHeadDot then
-		local head = model:FindFirstChild("Head")
-		if head and head:IsA("BasePart") then
-			local hp, on = Camera:WorldToViewportPoint(head.Position)
-			o.Dot.Visible = on
-			o.Dot.BackgroundColor3 = color
-			o.Dot.Position = UDim2.fromOffset(px(hp.X), px(hp.Y))
-		else
-			o.Dot.Visible = false
-		end
-	else
-		o.Dot.Visible = false
-	end
-
-	if Settings.Tracers then
-		local p1
-		if Settings.TracerOrigin == 1 then p1 = Vector2.new(vp.X / 2, vp.Y)
-		elseif Settings.TracerOrigin == 2 then p1 = vp / 2
-		else p1 = getAimOrigin() end
-		local p2 = Vector2.new(center.X, center.Y)
-		local d = p2 - p1
-		local len = d.Magnitude
-		if len > 2 then
-			o.Tracer.Visible = true
-			o.Tracer.BackgroundColor3 = color
-			o.Tracer.Size = UDim2.fromOffset(len, 1.5)
-			o.Tracer.Position = UDim2.fromOffset((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2)
-			o.Tracer.Rotation = math.deg(math.atan2(d.Y, d.X))
-		else
-			o.Tracer.Visible = false
-		end
-	else
-		o.Tracer.Visible = false
-	end
-end
-
-local espPool = {}
-local espSelAt = -1
-local espWasOn = false
-local function espLess(a, b) return a.D < b.D end
-
-local function updateEsp(now)
-	if not Settings.ESP then
-		if espWasOn then
-			espWasOn = false
-			for _, o in pairs(espObjs) do hideEsp(o) end
-		end
-		return
-	end
-	espWasOn = true
-	local camPos = Camera.CFrame.Position
-	if now - espSelAt >= 0.1 then
-		espSelAt = now
-		local maxD = Settings.ESPMaxDist
-		table.clear(espSel)
-		local n = 0
-		for _, t in ipairs(getTargets("esp")) do
-			local d = (t.Root.Position - camPos).Magnitude
-			if maxD == 0 or d <= maxD then
-				n += 1
-				local e = espPool[n]
-				if not e then e = {}; espPool[n] = e end
-				e.T, e.D = t, d
-				espSel[n] = e
-			end
-		end
-		table.sort(espSel, espLess)
-	end
+local function baseScale()
 	local vp = Camera.ViewportSize
-	for i = 1, math.min(#espSel, Settings.ESPMaxTargets) do
-		local t = espSel[i].T
-		if t.Model.Parent and t.Root.Parent then
-			local o = espObjs[t.Model]
-			if not o then
-				o = newEsp(t.Model)
-				espObjs[t.Model] = o
-			end
-			o.Seen = now
-			drawEsp(o, t, (t.Root.Position - camPos).Magnitude, now, vp)
-		end
+	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
+end
+
+local function setMenu(open)
+	menuOpen = open
+	local s = baseScale()
+	if open then
+		menu.Visible = true
+		menuScale.Scale = s * 0.94
+		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
+		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
+	else
+		tween(menu, { GroupTransparency = 1 }, 0.16)
+		tween(menuScale, { Scale = s * 0.94 }, 0.16)
+		task.delay(0.18, function()
+			if not menuOpen then menu.Visible = false end
+		end)
 	end
-	for model, o in pairs(espObjs) do
-		if o.Seen ~= now then
-			hideEsp(o)
-			if now - o.Seen > 3 or not model.Parent then destroyEsp(model, o) end
-		end
-	end
-	updateDroppedGuns(now)
+end
+
+local function toggleMenu() setMenu(not menuOpen) end
+
+closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
+
+local function refreshAll()
+	for _, refresh in ipairs(refreshers) do refresh() end
+end
+
+uiRefresh = refreshAll
+
+local function toggleSetting(key, label)
+	Settings[key] = not Settings[key]
+	refreshAll()
+	notify(label .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
 end
 
 --------------------------------------------------------------------
@@ -4601,7 +4476,7 @@ end
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
 hud.Position = UDim2.fromOffset(10, 10)
-hud.Size = UDim2.fromOffset(600, 20)
+hud.Size = UDim2.fromOffset(700, 20)
 hud.BackgroundColor3 = Theme.Bg
 hud.BackgroundTransparency = 0.25
 hud.BorderSizePixel = 0
@@ -4643,6 +4518,7 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 local fpsFrames, fpsAcc, hudAcc, btnAcc = 0, 0, 0, 0
+local lastFps = 60
 
 RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Value + 2, function(dt)
 	local now = os.clock()
@@ -4704,32 +4580,25 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 	if (Settings.ShowHUD or Settings.HUDEdit) and hudAcc >= 0.25 then
 		hudAcc = 0
 		local okp, pv = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
-		local ping = math.floor((okp and pv or pingVal) * 1000)
+		local ping = math.floor((okp and pv or 0) * 1000)
 		local parts = { math.floor(lastFps) .. " FPS", ping .. " ms" }
-		if Settings.AimEnabled then
-			local aimType
-			if Settings.UseLegitAim and Settings.UseSilentAim then aimType = "Legit+Silent"
-			elseif Settings.UseLegitAim then aimType = "Legit"
-			elseif Settings.UseSilentAim then aimType = "Silent"
-			else aimType = "OFF" end
-			parts[#parts + 1] = "Mira: " .. aimType
-		end
 		if IS_MM2 and Settings.MM2Mode then
-			local myRole = MM2.getMyRole()
-			local roleShort = "?"
-			if myRole == "innocent" then roleShort = "INOC"
-			elseif myRole == "murder" then roleShort = "MURD"
-			elseif myRole == "sheriff" then roleShort = "SHER" end
-			parts[#parts + 1] = "MM2: " .. roleShort
+			local myRole = MM2Lib.RoleOf(LocalPlayer)
+			local short = "?"
+			if myRole == "Murderer" then short = "MURD"
+			elseif myRole == "Sheriff" then short = "SHER"
+			elseif myRole == "Hero" then short = "HERO"
+			elseif myRole == "Innocent" then short = "INOC" end
+			parts[#parts + 1] = "MM2: " .. short
+			if MM2State.Bag.Max > 0 then
+				parts[#parts + 1] = string.format("Bag: %d/%d", MM2State.Bag.Current, MM2State.Bag.Max)
+			end
 		end
 		if Settings.Fly then parts[#parts + 1] = "Voo" end
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
 		if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 		if Settings.SeatInvisible then parts[#parts + 1] = "SeatInvis" end
-		if Settings.TriggerBot and triggerBotActive then parts[#parts + 1] = "Trigger" end
-		if Settings.AntiKill then parts[#parts + 1] = "AntiKill" end
-		if Settings.AntiVoid then parts[#parts + 1] = "AntiVoid" end
 		hud.Text = table.concat(parts, "  •  ")
 	end
 end)
@@ -4741,11 +4610,11 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	local gameTag = IS_MM2 and " (MM2 detectado)" or ""
-	bootShow("TestToolkit v62 carregado" .. gameTag .. "  •  "
+	local tag = IS_MM2 and " (MM2 detectado)" or ""
+	bootShow("TestToolkit v64 carregado" .. tag .. "  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
-	bootShow("TestToolkit: erro na interface: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
+	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
 end
