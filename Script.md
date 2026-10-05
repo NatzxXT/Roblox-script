@@ -1,20 +1,16 @@
 --[[
-    TestToolkit v64 - LocalScript (100% cliente)
+    TestToolkit v65 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v64:
+    v65:
       - MM2 CORE adaptado do Mario Hub (xDTaraZ)
       - Detecção de role via RemoteFunction (GetCurrentPlayerData)
       - ESP estilo Mario Hub (Highlight + BillboardGui com cores exatas)
-      - Auto Shoot Murderer (via gun.Shoot:FireServer)
-      - Kill All / Kill Aura (via events.KnifeStabbed / HandleTouched)
-      - Knife Throw Aim + Silent Aim (via hook namecall)
-      - Auto Grab Gun (via firetouchinterest)
-      - Auto Win (Kaitun) - joga a rodada por você
-      - Auto Dodge
-      - Coin Farm completo (LinearVelocity + CoinContainer + Bag tracking)
-      - Fling Player universal (funciona em qualquer jogo)
-      - Nossa UI original mantida
+      - Auto Shoot Murderer, Kill All, Kill Aura, Knife Throw Aim
+      - Auto Grab Gun, Auto Win (Kaitun), Auto Dodge
+      - Coin Farm completo
+      - Fling Player universal
+      - Correções de nil value (ordem de definição)
 ]]
 
 local Players = game:GetService("Players")
@@ -87,7 +83,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v64 carregando...")
+bootShow("TestToolkit v65 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -95,7 +91,7 @@ bootShow("TestToolkit v64 carregando...")
 local Settings = {
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
 	Wallhack = true, ESPTeammates = true, ESPMaxDist = 600, ESPMaxTargets = 12,
-	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.6,
+	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
 	ESPBox = 1, ESPHeadDot = false, ESPTool = false, TracerOrigin = 1,
 
 	TeamCheck = true, TargetMode = 3,
@@ -139,7 +135,6 @@ local Settings = {
 	MM2SmartAim = true,
 	MM2EspPlayers = false,
 	MM2EspGun = false,
-	MM2RoleNotify = false,
 	MM2SilentAim = false,
 	MM2AutoShootMurderer = false,
 	MM2AutoGrabGun = false,
@@ -156,8 +151,6 @@ local Settings = {
 	SeatInvisibleX = -25.95,
 	SeatInvisibleY = 84,
 	SeatInvisibleZ = 3537.55,
-	SeatInvisibleDuration = 0,
-	SeatInvisibleReturn = true,
 
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000, FlingMode = 1, FlingMode2 = 2,
@@ -166,8 +159,6 @@ local Settings = {
 
 	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1, DeviceMode = 1,
-
-	PerfMode = false, FPSUnlock = false, FPSCap = 240,
 
 	MobileEdit = false, MobileBtnSize = 56, MobileBtnAlpha = 0.15,
 
@@ -386,12 +377,13 @@ local MM2State = {
 	StickTarget = nil,
 	Esp = { Players = {}, Gun = nil, Folder = nil },
 	FlingBusy = false,
+	LastFlingPlayer = 0,
 }
 
 local MM2Lib = {}
 local MM2GameLib = {}
 
-do
+pcall(function()
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
 	local gameplay = remotes and remotes:WaitForChild("Gameplay", 10)
 	local extras = remotes and remotes:FindFirstChild("Extras")
@@ -405,7 +397,7 @@ do
 	MM2GameLib.CoinsStarted = Remote(gameplay, "CoinsStarted", "BaseRemoteEvent")
 	MM2GameLib.RoundStart = Remote(gameplay, "RoundStart", "BaseRemoteEvent")
 	MM2GameLib.RedeemCode = Remote(extras, "RedeemCode", "RemoteFunction")
-end
+end)
 
 function MM2Lib.Root(player)
 	local character = (player or LocalPlayer).Character
@@ -463,13 +455,16 @@ function MM2Lib.RefreshRoles(force)
 	if not force and os.clock() - MM2State.LastRoleFetch < 1 then return end
 	MM2State.LastRoleFetch = os.clock()
 	if not MM2GameLib.PlayerData then return end
-	local ok, roster = pcall(MM2GameLib.PlayerData.InvokeServer, MM2GameLib.PlayerData)
+	local ok, roster = pcall(function()
+		return MM2GameLib.PlayerData:InvokeServer()
+	end)
 	if ok and type(roster) == "table" then
 		MM2State.Roles = roster
 	end
 end
 
 function MM2Lib.RoleOf(player)
+	if not player then return "Innocent" end
 	local entry = MM2State.Roles[player.Name]
 	if entry and not entry.Dead and entry.Role then return entry.Role end
 	if MM2Lib.Tool(player, "Knife") then return "Murderer" end
@@ -694,7 +689,7 @@ function Murderer.NearestVictimRoot(origin)
 end
 
 --------------------------------------------------------------------
--- AIM HOOK (SilentAim + KnifeThrow)
+-- AIM HOOK
 --------------------------------------------------------------------
 local MM2Hook = { Restore = nil }
 
@@ -744,7 +739,7 @@ function MM2Hook.SyncAimHook()
 end
 
 --------------------------------------------------------------------
--- AUTO WIN (Kaitun)
+-- AUTO WIN / DODGE
 --------------------------------------------------------------------
 local function KaitunStep()
 	if not Settings.MM2AutoWin or not MM2Lib.IAmPlaying() then return end
@@ -755,9 +750,6 @@ local function KaitunStep()
 	Settings.CoinFarmEnabled = true
 end
 
---------------------------------------------------------------------
--- AUTO DODGE
---------------------------------------------------------------------
 local function DodgeStep()
 	local root = MM2Lib.Root()
 	local murderer = MM2Lib.FindByRole("Murderer")
@@ -766,7 +758,6 @@ local function DodgeStep()
 	if Murderer.Knife() or MM2Lib.Busy() then return end
 	if os.clock() - MM2State.LastDodge < MM2Cfg.DodgeCooldown then return end
 	if (threat.Position - root.Position).Magnitude > MM2Cfg.DodgeRange then return end
-	-- Acha a moeda mais distante do murderer
 	local map = MM2Lib.Map()
 	local best, bestDistance
 	if map then
@@ -904,27 +895,29 @@ function Farm.Step()
 end
 
 -- Bag tracking
-if MM2GameLib.CoinCollected then
-	MM2Lib.Connect(MM2GameLib.CoinCollected.OnClientEvent, function(_, current, maximum)
-		MM2State.Bag.Current = tonumber(current) or 0
-		MM2State.Bag.Max = tonumber(maximum) or 0
-	end)
-end
-if MM2GameLib.CoinsStarted then
-	MM2Lib.Connect(MM2GameLib.CoinsStarted.OnClientEvent, function()
-		MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
-		table.clear(MM2State.SkippedCoins)
-	end)
-end
-if MM2GameLib.RoundStart then
-	MM2Lib.Connect(MM2GameLib.RoundStart.OnClientEvent, function()
-		MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
-		table.clear(MM2State.Roles)
-	end)
-end
+pcall(function()
+	if MM2GameLib.CoinCollected then
+		MM2Lib.Connect(MM2GameLib.CoinCollected.OnClientEvent, function(_, current, maximum)
+			MM2State.Bag.Current = tonumber(current) or 0
+			MM2State.Bag.Max = tonumber(maximum) or 0
+		end)
+	end
+	if MM2GameLib.CoinsStarted then
+		MM2Lib.Connect(MM2GameLib.CoinsStarted.OnClientEvent, function()
+			MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
+			table.clear(MM2State.SkippedCoins)
+		end)
+	end
+	if MM2GameLib.RoundStart then
+		MM2Lib.Connect(MM2GameLib.RoundStart.OnClientEvent, function()
+			MM2State.Bag.Current, MM2State.Bag.Max = 0, 0
+			table.clear(MM2State.Roles)
+		end)
+	end
+end)
 
 --------------------------------------------------------------------
--- TARGETS (universal)
+-- TARGETS
 --------------------------------------------------------------------
 local humanoids = {}
 local rootOf = setmetatable({}, { __mode = "k" })
@@ -1190,20 +1183,20 @@ local function getCandidates(force)
 			end
 		end
 	end
-	table.sort(out, candLess)
+	task.sort and table.sort(out, candLess) or table.sort(out, candLess)
 	candCache = out
 	candLock = false
 	return out
 end
 
 --------------------------------------------------------------------
--- GRAB GUN (compatibilidade com o resto do script)
+-- GRAB GUN (compatibilidade)
 --------------------------------------------------------------------
 local GrabGun = {}
 function GrabGun.grabNearest() return Sheriff.GrabGun() end
 function GrabGun.step()
-	if Settings.MM2AutoGrabGun then
-		Sheriff.AutoGrabStep()
+	if Settings.MM2AutoGrabGun and IS_MM2 then
+		pcall(Sheriff.AutoGrabStep)
 	end
 end
 
@@ -1456,7 +1449,6 @@ local flyObjs = nil
 local antiKillHold = 0
 local flyCur, flyLastPos, flyCooldown = 0, nil, 0
 local FLY_RAMP = 500
-local uiRefresh = function() end
 local flyPlatformSet = false
 local stableOld, stableNew = nil, nil
 local stableTimer = 0
@@ -2177,7 +2169,7 @@ do
 		active = not active
 		Settings.SeatInvisible = active
 		if active then activate() else deactivate() end
-		if uiRefresh then pcall(uiRefresh) end
+		if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 	end
 
 	SeatInvisible.toggle = toggleInvisibility
@@ -2187,7 +2179,7 @@ do
 			active = false
 			Settings.SeatInvisible = false
 			deactivate()
-			if uiRefresh then pcall(uiRefresh) end
+			if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 		end
 	end
 
@@ -2197,7 +2189,7 @@ do
 				active = false
 				Settings.SeatInvisible = false
 				deactivate()
-				if uiRefresh then pcall(uiRefresh) end
+				if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 			end
 		end
 	end)
@@ -2321,7 +2313,7 @@ local function flyGuard(root, dt)
 		if new < Settings.FlySpeed then
 			Settings.FlySpeed = new
 			flyCur = math.min(flyCur, new)
-			uiRefresh()
+			if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 			notify("Voo: puxão detectado, reduzido para " .. new, "off")
 		end
 	end
@@ -2348,13 +2340,13 @@ local function walkGuard(hum, root, dt)
 		local new = math.max(16, math.floor(wsCurrent * 0.7))
 		wsCurrent = new
 		Settings.WalkSpeed = math.max(16, new)
-		uiRefresh()
+		if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 		notify("Velocidade: puxão detectado, reduzida para " .. new, "off")
 	elseif walkUserGoal and now - walkPulledAt > 6 and now - walkProbeAt > 3
 		and Settings.WalkSpeed < walkUserGoal then
 		walkProbeAt = now
 		Settings.WalkSpeed = math.min(walkUserGoal, math.ceil(Settings.WalkSpeed * 1.12))
-		uiRefresh()
+		if _G.__uiRefresh then pcall(_G.__uiRefresh) end
 	end
 end
 
@@ -2435,7 +2427,6 @@ do
 		return true
 	end
 
-	-- Fling estilo Mario Hub para players (usa BodyAngularVelocity + noclip)
 	local function doFlingPlayer(target)
 		local targetRoot = MM2Lib.Root(target)
 		local myRoot = MM2Lib.Root()
@@ -2446,7 +2437,6 @@ do
 		spin.MaxTorque = Vector3.one * math.huge
 		spin.AngularVelocity = Vector3.new(0, MM2Cfg.FlingForce, 0)
 		spin.Parent = myRoot
-		-- Ativa noclip temporariamente
 		local savedNoclip = {}
 		local char = LocalPlayer.Character
 		if char then
@@ -2516,7 +2506,6 @@ do
 	Fling.doFlingPlayer = doFlingPlayer
 
 	Fling.step = function()
-		-- Fling em bots
 		if Settings.Fling then
 			local now = os.clock()
 			local jitter = (math.random() - 0.5) * 0.04
@@ -2545,7 +2534,6 @@ do
 			restoreAllCollide()
 		end
 
-		-- Fling em players (universal)
 		if Settings.FlingPlayers and not MM2State.FlingBusy then
 			local now = os.clock()
 			if now - (MM2State.LastFlingPlayer or 0) >= 0.5 then
@@ -2589,7 +2577,7 @@ do
 end
 
 --------------------------------------------------------------------
--- HEARTBEAT (main loop)
+-- HEARTBEAT
 --------------------------------------------------------------------
 local defaultWalkSpeed = 16
 local defaultJumpPower, defaultUseJumpPower = 50, true
@@ -2720,10 +2708,8 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 		end
 
-		-- Fling
 		Fling.step()
 
-		-- MM2 loops
 		if IS_MM2 then
 			pcall(MM2Lib.RefreshRoles)
 			pcall(Sheriff.AutoShootStep)
@@ -2971,7 +2957,7 @@ end)
 local camFovDefault = nil
 
 --------------------------------------------------------------------
--- ESP (estilo Mario Hub - Highlight + BillboardGui)
+-- ESP
 --------------------------------------------------------------------
 local espRoot = Instance.new("Frame")
 espRoot.Name = "ESP"
@@ -3065,7 +3051,6 @@ local function destroyEsp(model, o)
 	espObjs[model] = nil
 end
 
--- ESP para arma dropada
 local droppedEsp = {}
 
 local function makeDropEsp(tool)
@@ -3123,7 +3108,6 @@ local function updateDroppedGuns(now)
 		end
 		return
 	end
-	-- Limpa antigos
 	for tool, o in pairs(droppedEsp) do
 		pcall(function() o.HL:Destroy() end)
 		pcall(function() o.Name:Destroy() end)
@@ -3147,7 +3131,6 @@ local function drawEsp(o, t, dist, now, vp)
 		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
 	local mm2Role = nil
 
-	-- Modo MM2: usa as cores exatas do Mario Hub
 	if IS_MM2 and Settings.MM2Mode and Settings.MM2EspPlayers and t.Player then
 		mm2Role = MM2Lib.RoleOf(t.Player)
 		if mm2Role == "Murderer" then color = MM2Cfg.Colors.Murderer
@@ -3351,6 +3334,10 @@ end
 --------------------------------------------------------------------
 -- INTERFACE
 --------------------------------------------------------------------
+local menuOpen = false
+local refreshers = {}
+local uiRefresh = function() end
+
 local function buildUI()
 
 local TAB_TOTAL = 9
@@ -3401,7 +3388,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v64"
+title.Text = "Test Toolkit v65"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -3584,8 +3571,6 @@ local function newPage(name, label)
 	currentPage = page
 	return page
 end
-
-local refreshers = {}
 
 local function newRow(height, className)
 	order += 1
@@ -3904,6 +3889,44 @@ local function addButton(text, desc, onClick)
 end
 
 --------------------------------------------------------------------
+-- SEÇÕES (agora com refreshAll/refresh definidos antes)
+--------------------------------------------------------------------
+local function refreshAll()
+	for _, refresh in ipairs(refreshers) do refresh() end
+end
+
+_G.__uiRefresh = refreshAll
+
+local function toggleSetting(key, label)
+	Settings[key] = not Settings[key]
+	refreshAll()
+	notify(label .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
+end
+
+local function setMenu(open)
+	menuOpen = open
+	local vp = Camera.ViewportSize
+	local s = math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
+	if open then
+		menu.Visible = true
+		menuScale.Scale = s * 0.94
+		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
+		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
+	else
+		tween(menu, { GroupTransparency = 1 }, 0.16)
+		tween(menuScale, { Scale = s * 0.94 }, 0.16)
+		task.delay(0.18, function()
+			if not menuOpen then menu.Visible = false end
+		end)
+	end
+end
+
+local function toggleMenuFn() setMenu(not menuOpen) end
+_G.__toggleMenu = toggleMenuFn
+
+closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
+
+--------------------------------------------------------------------
 -- ABA: MIRA
 --------------------------------------------------------------------
 newPage("aim", "Mira")
@@ -4003,7 +4026,7 @@ addSlider("Máx. de alvos", "ESPMaxTargets", 1, 30, 1, 0, "Menos = mais FPS")
 addSlider("Transparência do preenchimento", "ESPFillTrans", 0, 1, 0.05, 2, "0 = sólido")
 
 --------------------------------------------------------------------
--- ABA: MM2 (Mario Hub logic)
+-- ABA: MM2
 --------------------------------------------------------------------
 if IS_MM2 then
 	newPage("mm2", "MM2")
@@ -4051,7 +4074,7 @@ if IS_MM2 then
 	addToggle("Auto Win (Kaitun)", "MM2AutoWin", "Joga a rodada por você em qualquer role")
 	addToggle("Auto Dodge", "MM2AutoDodge", "Foge do Murder quando ele chega perto")
 
-	addSection("Coin Farm (estilo Mario Hub)")
+	addSection("Coin Farm")
 	addToggle("Auto Farm Coins", "CoinFarmEnabled", "Coleta todas as moedas automaticamente")
 	addSlider("Farm Speed", "CoinFarmSpeed", 16, 28, 1, 0, "Velocidade do farm")
 	addToggle("Reset When Bag Full", "CoinFarmResetWhenFull", "Morre e respawna quando encher")
@@ -4116,7 +4139,7 @@ addButton("Auto-detectar coordenadas", "Procura um lugar seguro", function()
 	Settings.SeatInvisibleX = math.floor(pos.X)
 	Settings.SeatInvisibleY = math.floor(pos.Y)
 	Settings.SeatInvisibleZ = math.floor(pos.Z)
-	if uiRefresh then uiRefresh() end
+	if _G.__uiRefresh then _G.__uiRefresh() end
 	notify("Coordenadas detectadas", "on")
 end)
 addSlider("Coord X", "SeatInvisibleX", -10000, 10000, 1, 0, "Posição X")
@@ -4165,7 +4188,7 @@ addButton("Apagar configuração", "Volta ao padrão", function()
 end)
 
 --------------------------------------------------------------------
--- ABA: FLING (Bots + Players)
+-- ABA: FLING
 --------------------------------------------------------------------
 newPage("fling", "Fling")
 
@@ -4177,9 +4200,8 @@ addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Empurrar: distância")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Tempo entre aplicações")
 
-addSection("Fling Players (universal - estilo Mario Hub)")
-addInfo("Arremessa players de verdade (funciona em qualquer jogo). "
-	.. "Usa BodyAngularVelocity + noclip temporário para prender no alvo.", 50)
+addSection("Fling Players (universal)")
+addInfo("Arremessa players de verdade. Usa BodyAngularVelocity + noclip temporário.", 40)
 addToggle("Fling Players", "FlingPlayers", "Habilita arremesso em players")
 addCycle("Modo", "FlingPlayerMode", { "Mais próximo", "Alvo da mira", "Todos no alcance" }, "Quem é arremessado")
 addSlider("Alcance (players)", "FlingPlayerRange", 5, 200, 5, 0, "Studs")
@@ -4305,7 +4327,9 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
-makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil, function() return menuOpen end, toggleMenu)
+makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil, function() return menuOpen end, function()
+	if _G.__toggleMenu then _G.__toggleMenu() end
+end)
 makeMobileBtn("MIRA", UDim2.fromScale(0.9, 0.42), "ShowBtnAim", function() return aimActive end, function()
 	if Settings.AimMode == 1 then aimActive = true
 	else aimActive = not aimActive end
@@ -4365,7 +4389,9 @@ table.insert(deviceListeners, applyDeviceLayout)
 layoutTabs()
 selectTab("aim", true)
 applyDeviceLayout()
--- refreshAll() foi movido para depois da definição (mais abaixo)
+refreshAll()  -- agora sim, refreshAll já está definido
+
+end -- fim buildUI
 
 --------------------------------------------------------------------
 -- TECLAS
@@ -4400,7 +4426,10 @@ UserInputService.InputBegan:Connect(function(input)
 	end
 	if UserInputService:GetFocusedTextBox() then return end
 
-	if input.KeyCode == MENU_KEY then toggleMenu(); return end
+	if input.KeyCode == MENU_KEY then
+		if _G.__toggleMenu then _G.__toggleMenu() end
+		return
+	end
 
 	if matchesBind(input, Settings.AimKey) then
 		if Settings.AimMode == 1 then aimActive = true
@@ -4411,11 +4440,14 @@ UserInputService.InputBegan:Connect(function(input)
 	elseif matchesBind(input, Settings.SwitchKey) then
 		if isAiming() then switchTarget() end
 	elseif matchesBind(input, Settings.NoclipKey) then
-		toggleSetting("Noclip", "Noclip")
+		Settings.Noclip = not Settings.Noclip
+		if _G.__uiRefresh then _G.__uiRefresh() end
 	elseif matchesBind(input, Settings.FlyKey) then
-		toggleSetting("Fly", "Voo")
+		Settings.Fly = not Settings.Fly
+		if _G.__uiRefresh then _G.__uiRefresh() end
 	elseif input.KeyCode == Settings.FlingKey then
-		toggleSetting("Fling", "Fling")
+		Settings.Fling = not Settings.Fling
+		if _G.__uiRefresh then _G.__uiRefresh() end
 	elseif input.KeyCode == Enum.KeyCode.H and IS_MM2 then
 		task.spawn(function() Sheriff.GrabGun() end)
 	end
@@ -4426,52 +4458,6 @@ UserInputService.InputEnded:Connect(function(input)
 		aimActive = false
 	end
 end)
-
---------------------------------------------------------------------
--- MENU OPEN/CLOSE
---------------------------------------------------------------------
-local menuOpen = false
-
-local function baseScale()
-	local vp = Camera.ViewportSize
-	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
-end
-
-local function setMenu(open)
-	menuOpen = open
-	local s = baseScale()
-	if open then
-		menu.Visible = true
-		menuScale.Scale = s * 0.94
-		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
-		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
-	else
-		tween(menu, { GroupTransparency = 1 }, 0.16)
-		tween(menuScale, { Scale = s * 0.94 }, 0.16)
-		task.delay(0.18, function()
-			if not menuOpen then menu.Visible = false end
-		end)
-	end
-end
-
-local function toggleMenu() setMenu(not menuOpen) end
-
-closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
-
-local function refreshAll()
-	for _, refresh in ipairs(refreshers) do refresh() end
-end
-
-uiRefresh = refreshAll
-
--- Agora sim, chama o refresh depois que a função foi definida
-refreshAll()
-
-local function toggleSetting(key, label)
-	Settings[key] = not Settings[key]
-	refreshAll()
-	notify(label .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
-end
 
 --------------------------------------------------------------------
 -- HUD
@@ -4606,15 +4592,13 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 	end
 end)
 
-end -- fim buildUI
-
 --------------------------------------------------------------------
 -- INICIAR
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
 	local tag = IS_MM2 and " (MM2 detectado)" or ""
-	bootShow("TestToolkit v64 carregado" .. tag .. "  •  "
+	bootShow("TestToolkit v65 carregado" .. tag .. "  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
