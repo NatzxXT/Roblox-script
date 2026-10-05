@@ -1,11 +1,6 @@
 --[[
-    TestToolkit v68 - UNIVERSAL (funciona em qualquer jogo)
+    TestToolkit v69 - UNIVERSAL (estável)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
-    Novidades v68:
-      - Fling Player com dropdown + botão
-      - Aba de Keybinds rebindable (só PC)
-      - Botão "Fling Player (Alvo da mira)"
-      - Duração e força do giro configuráveis
 ]]
 
 local Players = game:GetService("Players")
@@ -14,7 +9,6 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
-local HttpService = game:GetService("HttpService")
 local PhysicsService = game:GetService("PhysicsService")
 local VirtualUser = game:GetService("VirtualUser")
 
@@ -27,19 +21,18 @@ end)
 --------------------------------------------------------------------
 -- BOOT
 --------------------------------------------------------------------
-local bootGui, bootLabel, bootToken = nil, nil, 0
+local bootGui, bootLabel = nil, nil
 local function bootShow(text, color, hideAfter)
 	pcall(function()
 		if not bootGui then
 			bootGui = Instance.new("ScreenGui")
-			bootGui.Name = "TestToolkitBoot"
 			bootGui.ResetOnSpawn = false
 			bootGui.IgnoreGuiInset = true
 			bootGui.DisplayOrder = 1000
 			bootLabel = Instance.new("TextLabel")
 			bootLabel.AnchorPoint = Vector2.new(0.5, 0)
 			bootLabel.Position = UDim2.new(0.5, 0, 0, 8)
-			bootLabel.Size = UDim2.new(0.9, 0, 0, 60)
+			bootLabel.Size = UDim2.new(0.9, 0, 0, 50)
 			bootLabel.BackgroundColor3 = Color3.fromRGB(16, 16, 24)
 			bootLabel.BackgroundTransparency = 0.15
 			bootLabel.BorderSizePixel = 0
@@ -50,31 +43,28 @@ local function bootShow(text, color, hideAfter)
 			bootLabel.Parent = bootGui
 			bootGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 		end
-		bootToken += 1
-		local token = bootToken
 		bootLabel.Text = text
 		bootLabel.TextColor3 = color or Color3.new(1, 1, 1)
 		bootGui.Enabled = true
 		if hideAfter then
 			task.delay(hideAfter, function()
-				if token == bootToken and bootGui then bootGui.Enabled = false end
+				if bootGui then bootGui.Enabled = false end
 			end)
 		end
 	end)
 end
-bootShow("TestToolkit v68 carregando...")
+bootShow("TestToolkit v69 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
 --------------------------------------------------------------------
 local Settings = {
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
-	Wallhack = true, ESPTeammates = true, ESPMaxDist = 600, ESPMaxTargets = 12,
+	Wallhack = true, ESPMaxDist = 600, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.6,
-	ESPBox = 1, ESPHeadDot = false, ESPTool = false, TracerOrigin = 1,
+	ESPBox = 1, Tracers = false, TracerOrigin = 1,
 
-	TeamCheck = true, TargetMode = 3,
-
+	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
 	AimMode = 1, AimPart = 3, AimWallCheck = true,
 	Smoothness = 0.15, SnapAngle = 6, AutoPredict = true, PredictScale = 0.6,
@@ -88,7 +78,7 @@ local Settings = {
 	TriggerFOV = 100, TriggerVisible = true, TriggerDelay = 0.05,
 
 	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
-	HitboxInvisible = false, HitboxWallCheck = false, HitboxIgnoreAllies = true,
+	HitboxInvisible = false, HitboxIgnoreAllies = true,
 	ExpandHead = true, ExpandTorso = true, ExpandUpperTorso = true, ExpandLowerTorso = false,
 
 	WalkSpeedOn = false, WalkSpeed = 32, WalkAutoLimit = true,
@@ -100,18 +90,15 @@ local Settings = {
 	AntiKill = false, AntiKillMargin = 200,
 	AntiFling = false, AntiFlingRestore = true, AntiFlingSpeed = 160,
 	InfJump = false, FullBright = false, NoFog = false,
-	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
+	CamFOVOn = false, CamFOV = 90, AntiAFK = true,
 
 	SeatInvisible = false,
-	SeatInvisibleX = -25.95,
-	SeatInvisibleY = 84,
-	SeatInvisibleZ = 3537.55,
+	SeatInvisibleX = -25.95, SeatInvisibleY = 84, SeatInvisibleZ = 3537.55,
 
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000, FlingMode = 1, FlingMode2 = 2,
-	FlingBots = true, FlingRepeat = 0.1,
-
-	FlingTargetPlayer = "Nenhum",
+	FlingRepeat = 0.1,
+	FlingPlayerTarget = "Nenhum",
 	FlingPlayerDuration = 2.5,
 	FlingPlayerSpin = 90000,
 	FlingPlayerKey = Enum.KeyCode.B,
@@ -119,161 +106,27 @@ local Settings = {
 	MENU_KEY = Enum.KeyCode.RightControl,
 
 	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
-	Notifications = true, MenuAlpha = 0.1, DeviceMode = 1,
+	Notifications = true, MenuAlpha = 0.1,
 
-	MobileEdit = false, MobileBtnSize = 56, MobileBtnAlpha = 0.15,
-
-	ShowBtnFly = true, ShowBtnNoclip = true, ShowBtnDown = true,
-	ShowBtnEsp = true, ShowBtnTrace = true, ShowBtnInf = true,
-	ShowBtnAim = true, ShowBtnFling = true,
-}
-_G.TT_Settings = Settings
-
---------------------------------------------------------------------
--- CONFIG
---------------------------------------------------------------------
-local CONFIG_FILE = "TestToolkit_config.json"
-local CONFIG_SKIP = {
-	DeviceMode = true, MobileEdit = true, HUDEdit = true,
-	Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true, MENU_KEY = true, FlingPlayerKey = true,
+	MobileBtnSize = 56, MobileBtnAlpha = 0.15,
+	ShowBtnAim = true, ShowBtnFly = true, ShowBtnNoclip = true,
+	ShowBtnEsp = true, ShowBtnFling = true,
 }
 
-local function serializeSettings()
-	local data = {}
-	for k, v in pairs(Settings) do
-		if not CONFIG_SKIP[k] then
-			local t = typeof(v)
-			if t == "boolean" or t == "number" or t == "string" then
-				data[k] = v
-			elseif t == "EnumItem" then
-				data[k] = { tostring(v.EnumType), v.Name }
-			elseif t == "Color3" then
-				data[k] = { "Color3", v.R, v.G, v.B }
-			end
-		end
-	end
-	return data
-end
-
-local function applySavedConfig(data)
-	if type(data) ~= "table" then return end
-	for k, v in pairs(data) do
-		local cur = Settings[k]
-		if cur ~= nil and not CONFIG_SKIP[k] then
-			local t = typeof(cur)
-			if (t == "boolean" or t == "number" or t == "string") and typeof(v) == t then
-				Settings[k] = v
-			elseif t == "EnumItem" and type(v) == "table" and #v == 2 then
-				local ok, item = pcall(function() return Enum[v[1]][v[2]] end)
-				if ok and typeof(item) == "EnumItem" and item.EnumType == cur.EnumType then
-					Settings[k] = item
-				end
-			elseif t == "Color3" and type(v) == "table" and v[1] == "Color3" then
-				Settings[k] = Color3.new(v[2], v[3], v[4])
-			end
-		end
-	end
-end
-
-pcall(function()
-	if isfile and readfile and isfile(CONFIG_FILE) then
-		applySavedConfig(HttpService:JSONDecode(readfile(CONFIG_FILE)))
-	end
-end)
-
---------------------------------------------------------------------
--- DEVICE
---------------------------------------------------------------------
-local function detectMobile()
-	if Settings.DeviceMode == 2 then return false end
-	if Settings.DeviceMode == 3 then return true end
-	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-end
-
-local isMobile = detectMobile()
-local deviceListeners = {}
-local mobileFlyDown = false
-
-local function refreshDevice()
-	local m = detectMobile()
-	if m ~= isMobile then
-		isMobile = m
-		for _, fn in ipairs(deviceListeners) do pcall(fn) end
-	end
-end
-UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(refreshDevice)
-UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(refreshDevice)
-
-local function getAimOrigin()
-	if isMobile then
-		local vp = Camera.ViewportSize
-		return Vector2.new(vp.X / 2, vp.Y / 2)
-	end
-	return UserInputService:GetMouseLocation()
-end
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
 --------------------------------------------------------------------
 -- TEAM
 --------------------------------------------------------------------
 local manualAllies = setmetatable({}, { __mode = "k" })
-local TEAM_KEYS = { "Team", "TeamName", "TeamColor", "team", "teamName", "Side", "Faction" }
-
-local function toKey(v)
-	local t = typeof(v)
-	if t == "string" then return v ~= "" and ("s:" .. v) or nil
-	elseif t == "Instance" then return v.Name ~= "" and ("s:" .. v.Name) or nil
-	elseif t == "BrickColor" then return "c:" .. v.Name
-	elseif t == "Color3" then return "c:" .. v:ToHex()
-	elseif t == "number" then return "n:" .. v end
-	return nil
-end
-
-local function fromContainer(inst)
-	for _, n in ipairs(TEAM_KEYS) do
-		local k = toKey(inst:GetAttribute(n))
-		if k then return k end
-	end
-	for _, n in ipairs(TEAM_KEYS) do
-		local v = inst:FindFirstChild(n)
-		if v and v:IsA("ValueBase") then
-			local k = toKey(v.Value)
-			if k then return k end
-		end
-	end
-	return nil
-end
-
-local function getTeamKey(model, plr)
-	if plr then
-		if plr.Team then return "s:" .. plr.Team.Name end
-		local k = fromContainer(plr)
-		if k then return k end
-		if not plr.Neutral and plr.TeamColor then return "c:" .. plr.TeamColor.Name end
-	end
-	if model then return fromContainer(model) end
-	return nil
-end
-
-local teamCache = setmetatable({}, { __mode = "k" })
-local myTeamKey, myTeamAt = nil, -1
 
 local function isTeammate(model, plr)
 	local k = plr or model
 	if manualAllies[k] then return true end
-	local now = os.clock()
-	if now - myTeamAt > 0.5 then
-		myTeamKey = getTeamKey(LocalPlayer.Character, LocalPlayer)
-		myTeamAt = now
+	if plr and plr.Team and LocalPlayer.Team then
+		if plr.Team == LocalPlayer.Team then return true end
 	end
-	if myTeamKey == nil then return false end
-	local c = teamCache[k]
-	if c and now - c.t < 0.5 then return c.v end
-	if not c then c = {}; teamCache[k] = c end
-	local theirs = getTeamKey(model, plr)
-	c.v = theirs ~= nil and theirs == myTeamKey
-	c.t = now
-	return c.v
+	return false
 end
 
 --------------------------------------------------------------------
@@ -326,22 +179,6 @@ local function isAlive(hum)
 		return false
 	end
 	if hum.Health < 5 then return false end
-	local root = hum.Parent:FindFirstChild("HumanoidRootPart")
-	if root then
-		local upVector = root.CFrame.UpVector
-		local worldUp = Vector3.new(0, 1, 0)
-		local dot = upVector:Dot(worldUp)
-		if dot < 0.5 then return false end
-		if hum.FloorMaterial == Enum.Material.Air then
-			local vel = root.AssemblyLinearVelocity
-			if vel.Y < -50 then return false end
-		end
-	end
-	local head = hum.Parent:FindFirstChild("Head")
-	if head and root then
-		local heightDiff = head.Position.Y - root.Position.Y
-		if heightDiff < 0.5 then return false end
-	end
 	return true
 end
 
@@ -365,13 +202,7 @@ local function getTargets(purpose)
 			else modeOk = mode ~= 1 end
 			if modeOk then
 				local mate = isTeammate(model, plr)
-				local include
-				if purpose == "esp" then
-					include = (not mate) or Settings.ESPTeammates
-				else
-					include = (not mate) or (not Settings.TeamCheck)
-				end
-				if include then
+				if purpose == "esp" or not mate or (not Settings.TeamCheck) then
 					local root = getRoot(model)
 					if root then
 						local e = entries[model]
@@ -390,10 +221,7 @@ end
 
 _G.TT_getTargets = getTargets
 _G.TT_getRoot = getRoot
-_G.TT_isAlive = isAlive
 _G.TT_humanoids = humanoids
-_G.TT_isTeammate = isTeammate
-_G.TT_manualAllies = manualAllies
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -469,7 +297,13 @@ end
 
 local function pickAim(model, hum)
 	local n = fillOrder(model, hum)
-	local origin = getAimOrigin()
+	local origin
+	if isMobile then
+		local vp = Camera.ViewportSize
+		origin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		origin = UserInputService:GetMouseLocation()
+	end
 	local best, bestD = nil, nil
 	for i = 1, n do
 		local p = orderBuf[i]
@@ -500,7 +334,13 @@ local function getCandidates(force)
 	candLock = true
 	candTime = now
 
-	local origin = getAimOrigin()
+	local origin
+	if isMobile then
+		local vp = Camera.ViewportSize
+		origin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		origin = UserInputService:GetMouseLocation()
+	end
 	local camPos = Camera.CFrame.Position
 	local fovOn = Settings.FOVEnabled
 	local fovLimit = Settings.FOVRadius + 80
@@ -509,15 +349,13 @@ local function getCandidates(force)
 	local rough = roughBuf
 	table.clear(rough)
 	for _, t in ipairs(getTargets("aim")) do
-		if isAlive(t.Humanoid) then
-			local rp = t.Root.Position
-			local rsp, rOn = Camera:WorldToViewportPoint(rp)
-			if rOn then
-				local d2 = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-				local wd = (rp - camPos).Magnitude
-				if (not fovOn or d2 <= fovLimit) and (maxD == 0 or wd <= maxD) then
-					rough[#rough + 1] = { T = t, Dist = d2, WorldDist = wd, Health = t.Humanoid.Health }
-				end
+		local rp = t.Root.Position
+		local rsp, rOn = Camera:WorldToViewportPoint(rp)
+		if rOn then
+			local d2 = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
+			local wd = (rp - camPos).Magnitude
+			if (not fovOn or d2 <= fovLimit) and (maxD == 0 or wd <= maxD) then
+				rough[#rough + 1] = { T = t, Dist = d2, WorldDist = wd, Health = t.Humanoid.Health }
 			end
 		end
 	end
@@ -551,7 +389,7 @@ local function getCandidates(force)
 end
 
 --------------------------------------------------------------------
--- GUI + TEMA
+-- TEMA / GUI
 --------------------------------------------------------------------
 local gui = Instance.new("ScreenGui")
 gui.Name = "TestToolkitUniversal"
@@ -730,96 +568,25 @@ end
 
 local function getLocalHumanoid() refreshLocal(); return cHum end
 local function getLocalRoot() refreshLocal(); return cRoot end
-_G.TT_getLocalHumanoid = getLocalHumanoid
-_G.TT_getLocalRoot = getLocalRoot
 
 local myParts = {}
-local myPartsConns = {}
-
 local function trackMyCharacter(char)
-	for _, c in ipairs(myPartsConns) do c:Disconnect() end
-	table.clear(myPartsConns)
 	table.clear(myParts)
 	for _, d in ipairs(char:GetDescendants()) do
 		if d:IsA("BasePart") then myParts[d] = true end
 	end
-	myPartsConns[1] = char.DescendantAdded:Connect(function(d)
+	char.DescendantAdded:Connect(function(d)
 		if d:IsA("BasePart") then myParts[d] = true end
 	end)
-	myPartsConns[2] = char.DescendantRemoving:Connect(function(d)
+	char.DescendantRemoving:Connect(function(d)
 		myParts[d] = nil
 	end)
 end
-
-local otherChars = {}
-local otherConns = {}
-
-local function trackChar(char)
-	local data = { Parts = {}, Root = char:FindFirstChild("HumanoidRootPart") }
-	otherChars[char] = data
-	for _, d in ipairs(char:GetDescendants()) do
-		if d:IsA("BasePart") then data.Parts[d] = true end
-	end
-	local c1 = char.DescendantAdded:Connect(function(d)
-		if d:IsA("BasePart") then
-			data.Parts[d] = true
-			if d.Name == "HumanoidRootPart" then data.Root = d end
-		end
-	end)
-	local c2 = char.DescendantRemoving:Connect(function(d)
-		data.Parts[d] = nil
-	end)
-	local c3
-	c3 = char.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			c1:Disconnect(); c2:Disconnect(); c3:Disconnect()
-			if otherChars[char] == data then otherChars[char] = nil end
-		end
-	end)
-end
-
-local function trackPlayer(plr)
-	if plr == LocalPlayer then return end
-	if plr.Character then trackChar(plr.Character) end
-	otherConns[plr] = plr.CharacterAdded:Connect(trackChar)
-end
-
-for _, p in ipairs(Players:GetPlayers()) do trackPlayer(p) end
-Players.PlayerAdded:Connect(trackPlayer)
-Players.PlayerRemoving:Connect(function(plr)
-	local conn = otherConns[plr]
-	if conn then conn:Disconnect(); otherConns[plr] = nil end
-	if plr.Character then otherChars[plr.Character] = nil end
-end)
-
-local flyObjs = nil
-local antiKillHold = 0
-local flyCur, flyLastPos, flyCooldown = 0, nil, 0
-local FLY_RAMP = 500
-local uiRefresh = function() end
-local flyPlatformSet = false
-local stableOld, stableNew = nil, nil
-local stableTimer = 0
-
-local wsActive, jpActive = false, false
-local SPEED_RAMP_BASE = 240
-local wsCurrent = 16
-local walkLastPos, walkCooldown = nil, 0
-local walkUserGoal = nil
-local walkPulledAt = 0
-local walkProbeAt = 0
-
 if LocalPlayer.Character then trackMyCharacter(LocalPlayer.Character) end
-LocalPlayer.CharacterAdded:Connect(function(char)
-	flyObjs = nil
-	flyPlatformSet = false
-	stableOld, stableNew = nil, nil
-	walkLastPos = nil
-	trackMyCharacter(char)
-end)
+LocalPlayer.CharacterAdded:Connect(trackMyCharacter)
 
 --------------------------------------------------------------------
--- AIM-LOCK / SILENT / TRIGGER
+-- AIM STATE
 --------------------------------------------------------------------
 local currentTarget = nil
 local aimActive = false
@@ -841,9 +608,7 @@ local function switchTarget()
 	currentTarget = c[(idx % #c) + 1]
 end
 
-local function isAiming()
-	return Settings.AimEnabled and (aimActive or Settings.AimMode == 3)
-end
+local function isAiming() return Settings.AimEnabled and (aimActive or Settings.AimMode == 3) end
 local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
 
@@ -888,9 +653,6 @@ local function getVelocity(model, root)
 end
 
 local pingAt, pingVal = -1, 0.05
-local groundParams = RaycastParams.new()
-groundParams.FilterType = Enum.RaycastFilterType.Exclude
-
 local function predictPosition(t, dt)
 	local model, hum, part = t.Model, t.Humanoid, t.Part
 	local root = getRoot(model)
@@ -933,12 +695,6 @@ local function predictPosition(t, dt)
 		if hum.FloorMaterial == Enum.Material.Air then
 			local vy = math.clamp(vel.Y, -500, 500)
 			vertical = vy * time - 0.5 * Workspace.Gravity * time * time
-			groundParams.FilterDescendantsInstances = { LocalPlayer.Character, model }
-			local hit = Workspace:Raycast(pos, Vector3.new(0, -300, 0), groundParams)
-			if hit then
-				local minY = hit.Position.Y + (pos.Y - root.Position.Y) + hum.HipHeight + root.Size.Y / 2
-				vertical = math.max(vertical, math.min(0, minY - pos.Y))
-			end
 		end
 	else
 		vertical = math.clamp(vel.Y, -500, 500) * time
@@ -950,102 +706,35 @@ local function predictPosition(t, dt)
 	return result
 end
 
-local hookInstalled = false
-local function tryInstallHooks()
-	if hookInstalled then return end
-	if not hookfunction then return end
-	pcall(function()
-		local original = Camera.WorldToViewportPoint
-		Camera.WorldToViewportPoint = function(self, pos)
-			if silentActive and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
-				if typeof(pos) == "Vector3" then
-					local d = (pos - silentTarget.Part.Position).Magnitude
-					if d < 2 then return original(self, silentTarget.Part.Position) end
-				end
-			end
-			return original(self, pos)
-		end
-	end)
-	pcall(function()
-		local original = Camera.WorldToScreenPoint
-		Camera.WorldToScreenPoint = function(self, pos)
-			if silentActive and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
-				if typeof(pos) == "Vector3" then
-					local d = (pos - silentTarget.Part.Position).Magnitude
-					if d < 2 then return original(self, silentTarget.Part.Position) end
-				end
-			end
-			return original(self, pos)
-		end
-	end)
-	hookInstalled = true
-end
-
-local mouseHookInstalled = false
-local function tryInstallMouseHook()
-	if mouseHookInstalled then return end
-	local mouse = LocalPlayer:GetMouse()
-	if not mouse then return end
-	if not getrawmetatable or not setreadonly then return end
-	pcall(function()
-		local mt = getrawmetatable(mouse)
-		if not mt or getreadonly(mt) then return end
-		setreadonly(mt, false)
-		local oldIndex = mt.__index
-		mt.__index = function(self, key)
-			if silentActive and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
-				if key == "Hit" then
-					return silentTarget.Part.CFrame
-				elseif key == "Target" then
-					return silentTarget.Part
-				elseif key == "UnitRay" then
-					local myRoot = getLocalRoot()
-					if myRoot then
-						local origin = Camera.CFrame.Position
-						local dir = (silentTarget.Part.Position - origin).Unit
-						return Ray.new(origin, dir * 1000)
-					end
-				end
-			end
-			if type(oldIndex) == "function" then return oldIndex(self, key) end
-			return mouse[key]
-		end
-		setreadonly(mt, true)
-		mouseHookInstalled = true
-	end)
-end
-
-task.spawn(function()
-	task.wait(0.5)
-	pcall(tryInstallHooks)
-	pcall(tryInstallMouseHook)
-end)
-
 local function updateSilentTarget()
 	if not isSilent() or not isAiming() then
 		silentActive = false
 		silentTarget = nil
 		return
 	end
-	local origin = getAimOrigin()
+	local origin
+	if isMobile then
+		local vp = Camera.ViewportSize
+		origin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		origin = UserInputService:GetMouseLocation()
+	end
 	local camPos = Camera.CFrame.Position
 	local maxDist = Settings.SilentAimFOV
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(getTargets("aim")) do
-		if isAlive(t.Humanoid) and t.Root and t.Root.Parent then
-			local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
-			if on then
-				local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-				local wd = (t.Root.Position - camPos).Magnitude
-				if d <= maxDist then
-					if not Settings.SilentAimVisible or hasLineOfSight(t.Root, t.Model) then
-						if wd < bestD then best, bestD = t, wd end
-					end
+		local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
+		if on then
+			local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
+			local wd = (t.Root.Position - camPos).Magnitude
+			if d <= maxDist then
+				if not Settings.SilentAimVisible or hasLineOfSight(t.Root, t.Model) then
+					if wd < bestD then best, bestD = t, wd end
 				end
 			end
 		end
 	end
-	if best and isAlive(best.Humanoid) and best.Model.Parent then
+	if best and best.Model.Parent then
 		local head = best.Model:FindFirstChild("Head")
 		local torso = best.Model:FindFirstChild("UpperTorso") or best.Model:FindFirstChild("Torso")
 		local part = head or torso or best.Model:FindFirstChild("HumanoidRootPart")
@@ -1066,20 +755,24 @@ local lastTriggerShot = 0
 local function getTriggerTarget()
 	if not Settings.TriggerBot then return nil end
 	if not isAiming() and not Settings.TriggerBotAlways then return nil end
-	local origin = getAimOrigin()
+	local origin
+	if isMobile then
+		local vp = Camera.ViewportSize
+		origin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		origin = UserInputService:GetMouseLocation()
+	end
 	local camPos = Camera.CFrame.Position
 	local maxFov = Settings.TriggerFOV
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(getTargets("aim")) do
-		if isAlive(t.Humanoid) and t.Root and t.Root.Parent then
-			local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
-			if on then
-				local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-				local wd = (t.Root.Position - camPos).Magnitude
-				if d <= maxFov then
-					if not Settings.TriggerVisible or hasLineOfSight(t.Root, t.Model) then
-						if wd < bestD then best, bestD = t, wd end
-					end
+		local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
+		if on then
+			local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
+			local wd = (t.Root.Position - camPos).Magnitude
+			if d <= maxFov then
+				if not Settings.TriggerVisible or hasLineOfSight(t.Root, t.Model) then
+					if wd < bestD then best, bestD = t, wd end
 				end
 			end
 		end
@@ -1109,44 +802,36 @@ local function updateTriggerBot()
 		return
 	end
 	local now = os.clock()
-	local jitter = (math.random() - 0.5) * 0.02
-	if now - lastTriggerShot < Settings.TriggerDelay + jitter then return end
+	if now - lastTriggerShot < Settings.TriggerDelay then return end
 	local target = getTriggerTarget()
-	if not target then
-		triggerBotActive = false
-		return
-	end
+	if not target then triggerBotActive = false; return end
 	triggerBotActive = true
-	if Settings.TriggerVisible and not hasLineOfSight(target.Root, target.Model) then return end
 	lastTriggerShot = now
 	simulateClick()
 end
 
 RunService.RenderStepped:Connect(function()
 	pcall(function()
-		if not Settings.AimEnabled and not Settings.TriggerBot then
-			silentActive = false
-			silentTarget = nil
-			return
-		end
 		updateSilentTarget()
 		updateTriggerBot()
 	end)
 end)
 
 RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if spectating then
-		currentTarget = nil
-		lockMarker.Visible = false
-		return
-	end
+	if spectating then currentTarget = nil; lockMarker.Visible = false; return end
 
 	local now = os.clock()
 	local myRoot = getLocalRoot()
 	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
-	local aimOrigin = isFirstPerson
-		and Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-		or getAimOrigin()
+	local aimOrigin
+	if isFirstPerson then
+		aimOrigin = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	elseif isMobile then
+		local vp = Camera.ViewportSize
+		aimOrigin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		aimOrigin = UserInputService:GetMouseLocation()
+	end
 
 	if isLegit() and isAiming() then
 		if currentTarget then
@@ -1188,13 +873,6 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 			local part = currentTarget.Part
 			if not part or not part.Parent then
 				currentTarget = nil
-			else
-				local sp, on = Camera:WorldToViewportPoint(part.Position)
-				local tooFar = Settings.AimMaxDist > 0
-					and (part.Position - Camera.CFrame.Position).Magnitude > Settings.AimMaxDist * 1.1
-				local outFov = Settings.FOVEnabled
-					and (not on or (Vector2.new(sp.X, sp.Y) - aimOrigin).Magnitude > Settings.FOVRadius * 1.35)
-				if tooFar or outFov then currentTarget = nil end
 			end
 		end
 
@@ -1210,7 +888,7 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 				local curDir = camCF.LookVector
 				if not isFirstPerson and Settings.AimAtCursor then
 					local vp = Camera.ViewportSize
-					local mp = getAimOrigin()
+					local mp = aimOrigin
 					local tanY = math.tan(math.rad(Camera.FieldOfView) / 2)
 					local lx = ((mp.X / vp.X) * 2 - 1) * tanY * (vp.X / vp.Y)
 					local ly = (1 - (mp.Y / vp.Y) * 2) * tanY
@@ -1262,74 +940,17 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 end)
 
 --------------------------------------------------------------------
--- HITBOX EXPANDER
+-- HITBOX
 --------------------------------------------------------------------
 local HitboxExpander = {}
 do
 	local savedProps = setmetatable({}, { __mode = "k" })
-	local savedGroups = setmetatable({}, { __mode = "k" })
-
-	local HB_GROUP = "TTHitbox"
-	local PLAYER_GROUP = "TTPlayer"
-	local groupsReady = false
-
-	local function setupGroups()
-		local ok = pcall(function() PhysicsService:RegisterCollisionGroup(HB_GROUP) end)
-		pcall(function() PhysicsService:RegisterCollisionGroup(PLAYER_GROUP) end)
-		pcall(function() PhysicsService:CollisionGroupSetCollidable(HB_GROUP, HB_GROUP, false) end)
-		pcall(function() PhysicsService:CollisionGroupSetCollidable(HB_GROUP, PLAYER_GROUP, false) end)
-		pcall(function() PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PLAYER_GROUP, false) end)
-		pcall(function() PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, "Default", true) end)
-		groupsReady = true
-		return ok
-	end
-
-	task.spawn(function() pcall(setupGroups) end)
-
-	local function markPlayerPart(part)
-		if not part or not part:IsA("BasePart") then return end
-		if groupsReady then
-			savedGroups[part] = savedGroups[part] or part.CollisionGroup
-			pcall(function() part.CollisionGroup = PLAYER_GROUP end)
-		end
-	end
-
-	local function bindMyChar(char)
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BasePart") then markPlayerPart(d) end
-		end
-		char.DescendantAdded:Connect(function(d)
-			if d:IsA("BasePart") then task.defer(markPlayerPart, d) end
-		end)
-	end
-
-	if LocalPlayer.Character then bindMyChar(LocalPlayer.Character) end
-	LocalPlayer.CharacterAdded:Connect(function(char)
-		task.wait(0.1)
-		bindMyChar(char)
-	end)
-
-	local PART_KEYS = {
-		{ "Head", "ExpandHead" },
-		{ "UpperTorso", "ExpandUpperTorso" },
-		{ "Torso", "ExpandTorso" },
-		{ "LowerTorso", "ExpandLowerTorso" },
-	}
-
-	local function getActiveParts()
-		local list = {}
-		for _, entry in ipairs(PART_KEYS) do
-			if Settings[entry[2]] then list[#list + 1] = entry[1] end
-		end
-		return list
-	end
 
 	local function savePart(part)
 		if savedProps[part] then return end
 		savedProps[part] = {
 			Size = part.Size, CanCollide = part.CanCollide, Massless = part.Massless,
-			Transparency = part.Transparency, Color = part.Color, Material = part.Material,
-			CollisionGroup = part.CollisionGroup,
+			Transparency = part.Transparency,
 		}
 	end
 
@@ -1341,30 +962,35 @@ do
 			part.CanCollide = props.CanCollide
 			part.Massless = props.Massless
 			part.Transparency = props.Transparency
-			part.Color = props.Color
-			part.Material = props.Material
-			if groupsReady then part.CollisionGroup = props.CollisionGroup end
 		end)
 		savedProps[part] = nil
 	end
+
+	local PART_KEYS = {
+		{ "Head", "ExpandHead" },
+		{ "UpperTorso", "ExpandUpperTorso" },
+		{ "Torso", "ExpandTorso" },
+		{ "LowerTorso", "ExpandLowerTorso" },
+	}
 
 	local function expandPlayer(player)
 		local char = player.Character
 		if not char then return end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum or hum.Health <= 0 then return end
-		for _, name in ipairs(getActiveParts()) do
-			local part = char:FindFirstChild(name)
-			if part and part:IsA("BasePart") then
-				savePart(part)
-				local size = Settings.HitboxSize
-				pcall(function()
-					part.Size = Vector3.new(size, size, size)
-					part.CanCollide = false
-					part.Massless = true
-					if groupsReady then part.CollisionGroup = HB_GROUP end
-					part.Transparency = Settings.HitboxInvisible and 1 or 0.5
-				end)
+		for _, entry in ipairs(PART_KEYS) do
+			if Settings[entry[2]] then
+				local part = char:FindFirstChild(entry[1])
+				if part and part:IsA("BasePart") then
+					savePart(part)
+					local size = Settings.HitboxSize
+					pcall(function()
+						part.Size = Vector3.new(size, size, size)
+						part.CanCollide = false
+						part.Massless = true
+						part.Transparency = Settings.HitboxInvisible and 1 or 0.5
+					end)
+				end
 			end
 		end
 	end
@@ -1389,18 +1015,10 @@ do
 		local dist = (theirRoot.Position - myRoot.Position).Magnitude
 		if dist > math.max(10, Settings.HitboxRange or 200) then return false end
 		if Settings.HitboxIgnoreAllies and isTeammate(char, player) then return false end
-		if Settings.HitboxWallCheck then
-			local head = char:FindFirstChild("Head")
-			if head and not hasLineOfSight(head, char) then
-				if not hasLineOfSight(theirRoot, char) then return false end
-			end
-		end
 		return true
 	end
 
 	local lastApply = 0
-	local APPLY_INTERVAL = 0.1
-
 	local function step()
 		if not Settings.HitboxExpander then
 			for _, plr in ipairs(Players:GetPlayers()) do
@@ -1409,7 +1027,7 @@ do
 			return
 		end
 		local now = os.clock()
-		if now - lastApply < APPLY_INTERVAL then return end
+		if now - lastApply < 0.1 then return end
 		lastApply = now
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= LocalPlayer then
@@ -1430,140 +1048,17 @@ task.spawn(function()
 	while task.wait(0.1) do pcall(HitboxExpander.step) end
 end)
 
-LocalPlayer.CharacterAdded:Connect(function()
-	task.wait(0.5)
-	pcall(HitboxExpander.restoreAll)
-end)
-
---------------------------------------------------------------------
--- INVISIBILIDADE VIA SEAT
---------------------------------------------------------------------
-local SeatInvisible = {}
-do
-	local mySeat = nil
-	local active = false
-
-	local function cleanupSeat()
-		local existing = workspace:FindFirstChild("invischair")
-		if existing then pcall(function() existing:Destroy() end) end
-		mySeat = nil
-	end
-
-	local function findSafeCoords()
-		local bestPos = Vector3.new(-25.95, 84, 3537.55)
-		local myRoot = getLocalRoot()
-		if not myRoot then return bestPos end
-		pcall(function()
-			local xs, zs = {}, {}
-			local count = 0
-			for _, d in ipairs(Workspace:GetDescendants()) do
-				if d:IsA("BasePart") and d.Anchored then
-					xs[#xs + 1] = d.Position.X
-					zs[#zs + 1] = d.Position.Z
-					count += 1
-					if count >= 500 then break end
-				end
-			end
-			if #xs >= 10 then
-				table.sort(xs); table.sort(zs)
-				bestPos = Vector3.new(xs[#xs] + 5000, 500, zs[1] - 5000)
-			end
-		end)
-		return bestPos
-	end
-
-	local function activate()
-		local char = LocalPlayer.Character
-		if not char then return end
-		local hrp = char:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-		cleanupSeat()
-		local savedPosition = hrp.CFrame
-		local targetPos = Vector3.new(Settings.SeatInvisibleX, Settings.SeatInvisibleY, Settings.SeatInvisibleZ)
-		char:MoveTo(targetPos)
-		task.wait(0.15)
-		local seat = Instance.new("Seat")
-		seat.Name = "invischair"
-		seat.Anchored = false
-		seat.CanCollide = false
-		seat.Transparency = 1
-		seat.Position = targetPos
-		seat.Parent = workspace
-		mySeat = seat
-		local weld = Instance.new("Weld")
-		weld.Part0 = seat
-		weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
-		weld.Parent = seat
-		task.wait()
-		seat.CFrame = savedPosition
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0.5 end
-		end
-	end
-
-	local function deactivate()
-		cleanupSeat()
-		if LocalPlayer.Character then
-			for _, d in ipairs(LocalPlayer.Character:GetDescendants()) do
-				if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0 end
-			end
-		end
-	end
-
-	local function toggleInvisibility()
-		active = not active
-		Settings.SeatInvisible = active
-		if active then activate() else deactivate() end
-		if uiRefresh then pcall(uiRefresh) end
-	end
-
-	SeatInvisible.toggle = toggleInvisibility
-	SeatInvisible.findSafeCoords = findSafeCoords
-	SeatInvisible.forceOff = function()
-		if active then
-			active = false
-			Settings.SeatInvisible = false
-			deactivate()
-			if uiRefresh then pcall(uiRefresh) end
-		end
-	end
-
-	task.spawn(function()
-		while task.wait(0.5) do
-			if active and (not mySeat or not mySeat.Parent) then
-				active = false
-				Settings.SeatInvisible = false
-				deactivate()
-				if uiRefresh then pcall(uiRefresh) end
-			end
-		end
-	end)
-
-	task.spawn(function()
-		while task.wait(0.3) do
-			if active then
-				local char = LocalPlayer.Character
-				if char then
-					for _, d in ipairs(char:GetDescendants()) do
-						if d:IsA("BasePart") or d:IsA("Decal") then
-							if d.Transparency ~= 0.5 and d.Transparency ~= 1 then d.Transparency = 0.5 end
-						end
-					end
-				end
-			end
-		end
-	end)
-
-	LocalPlayer.CharacterAdded:Connect(function()
-		active = false
-		Settings.SeatInvisible = false
-		cleanupSeat()
-	end)
-end
-
 --------------------------------------------------------------------
 -- FLY
 --------------------------------------------------------------------
+local flyObjs = nil
+local flyPlat = false
+local flyCur = 0
+local FLY_RAMP = 500
+local flyLastPos = nil
+local flyCooldown = 0
+local antiKillHold = 0
+
 local function destroyFly()
 	flyCur, flyLastPos = 0, nil
 	if flyObjs then
@@ -1572,10 +1067,10 @@ local function destroyFly()
 		end
 		flyObjs = nil
 	end
-	if flyPlatformSet then
+	if flyPlat then
 		local hum = getLocalHumanoid()
 		if hum then hum.PlatformStand = false end
-		flyPlatformSet = false
+		flyPlat = false
 	end
 end
 
@@ -1583,10 +1078,8 @@ local function ensureFly(root)
 	if flyObjs and flyObjs.Att and flyObjs.Att.Parent == root then return flyObjs end
 	destroyFly()
 	local att = Instance.new("Attachment")
-	att.Name = "TTFlyAttachment"
 	att.Parent = root
 	local lv = Instance.new("LinearVelocity")
-	lv.Name = "TTFlyVelocity"
 	lv.Attachment0 = att
 	lv.RelativeTo = Enum.ActuatorRelativeTo.World
 	lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
@@ -1594,7 +1087,6 @@ local function ensureFly(root)
 	lv.VectorVelocity = Vector3.zero
 	lv.Parent = root
 	local ao = Instance.new("AlignOrientation")
-	ao.Name = "TTFlyAlign"
 	ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
 	ao.Attachment0 = att
 	ao.RigidityEnabled = false
@@ -1612,7 +1104,7 @@ local function updateFly(hum, root, dt)
 		return
 	end
 	if not hum.PlatformStand then hum.PlatformStand = true end
-	flyPlatformSet = true
+	flyPlat = true
 	local cam = Workspace.CurrentCamera
 	local look = cam.CFrame.LookVector
 	local flatLook = Vector3.new(look.X, 0, look.Z)
@@ -1628,7 +1120,7 @@ local function updateFly(hum, root, dt)
 	local up = 0
 	if not typing then
 		if UserInputService:IsKeyDown(Enum.KeyCode.Space) or hum.Jump then up += 1 end
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or mobileFlyDown then up -= 1 end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then up -= 1 end
 	end
 	dir += Vector3.new(0, up, 0)
 	if dir.Magnitude > 1 then dir = dir.Unit end
@@ -1638,89 +1130,17 @@ local function updateFly(hum, root, dt)
 	else
 		flyCur = goal
 	end
-	f.LV.VectorVector = dir * flyCur
+	f.LV.VectorVelocity = dir * flyCur
 	f.AO.CFrame = CFrame.lookAt(Vector3.zero, flatLook)
 end
 
-local function flyGuard(root, dt)
-	local pos = root.Position
-	local last = flyLastPos
-	flyLastPos = pos
-	if not Settings.FlyAutoLimit or not last or not flyObjs then return end
-	local now = os.clock()
-	if now < flyCooldown or now < antiKillHold + 0.3 then return end
-	local intended = flyObjs.LV.VectorVelocity
-	if intended.Magnitude < 5 then return end
-	local back = -(pos - last):Dot(intended.Unit)
-	if back > math.max(20, intended.Magnitude * dt * 2) then
-		flyCooldown = now + 1.5
-		local new = math.max(20, math.floor(Settings.FlySpeed * 0.65))
-		if new < Settings.FlySpeed then
-			Settings.FlySpeed = new
-			flyCur = math.min(flyCur, new)
-			uiRefresh()
-			notify("Voo: puxão detectado, reduzido para " .. new, "off")
-		end
-	end
-end
-
-local function walkGuard(hum, root, dt)
-	local pos = root.Position
-	local last = walkLastPos
-	walkLastPos = pos
-	if not Settings.WalkAutoLimit or not last or Settings.Fly then return end
-	local now = os.clock()
-	if now < antiKillHold + 0.5 then return end
-	local move = hum.MoveDirection
-	local flatMove = Vector3.new(move.X, 0, move.Z)
-	if flatMove.Magnitude < 0.1 then return end
-	flatMove = flatMove.Unit
-	local disp = Vector3.new(pos.X - last.X, 0, pos.Z - last.Z)
-	local back = -disp:Dot(flatMove)
-	local limit = math.max(6, wsCurrent * dt * 2.5)
-	if now >= walkCooldown and back > limit and wsCurrent > 20 then
-		walkUserGoal = walkUserGoal or Settings.WalkSpeed
-		walkCooldown = now + 1.2
-		walkPulledAt = now
-		local new = math.max(16, math.floor(wsCurrent * 0.7))
-		wsCurrent = new
-		Settings.WalkSpeed = math.max(16, new)
-		uiRefresh()
-		notify("Velocidade: puxão detectado, reduzida para " .. new, "off")
-	elseif walkUserGoal and now - walkPulledAt > 6 and now - walkProbeAt > 3
-		and Settings.WalkSpeed < walkUserGoal then
-		walkProbeAt = now
-		Settings.WalkSpeed = math.min(walkUserGoal, math.ceil(Settings.WalkSpeed * 1.12))
-		uiRefresh()
-	end
-end
-
 --------------------------------------------------------------------
--- FLING (Bots + Players com dropdown)
+-- FLING (Bots + Players por dropdown)
 --------------------------------------------------------------------
 local Fling = {}
 do
 	local lastFling = 0
-	local lastNotify = 0
-	local flingActive = false
 	local savedCollide = {}
-
-	local function getTargetParts(model)
-		local hum = model:FindFirstChildOfClass("Humanoid")
-		if not hum then return nil end
-		if hum.RigType == Enum.HumanoidRigType.R6 then
-			return {
-				Root = model:FindFirstChild("HumanoidRootPart"),
-				Torso = model:FindFirstChild("Torso"),
-				Head = model:FindFirstChild("Head"),
-			}
-		end
-		return {
-			Root = model:FindFirstChild("HumanoidRootPart"),
-			Torso = model:FindFirstChild("UpperTorso"),
-			Head = model:FindFirstChild("Head"),
-		}
-	end
 
 	local function disableBotCollide(model)
 		for _, part in ipairs(model:GetDescendants()) do
@@ -1739,10 +1159,10 @@ do
 	end
 
 	local function doFling(targetRoot, myRoot, power, mode)
-		if not targetRoot or not targetRoot.Parent then return false end
-		if not myRoot or not myRoot.Parent then return false end
+		if not targetRoot or not targetRoot.Parent then return end
+		if not myRoot or not myRoot.Parent then return end
 		local hum = targetRoot.Parent:FindFirstChildOfClass("Humanoid")
-		if hum and hum.Health <= 0 then return false end
+		if hum and hum.Health <= 0 then return end
 		disableBotCollide(targetRoot.Parent)
 		local myPos = myRoot.Position
 		local tPos = targetRoot.Position
@@ -1761,15 +1181,6 @@ do
 			targetRoot.AssemblyLinearVelocity = linVel
 			targetRoot.AssemblyAngularVelocity = angVel
 		end)
-		pcall(function()
-			for _, part in ipairs(targetRoot.Parent:GetDescendants()) do
-				if part:IsA("BasePart") and part ~= targetRoot then
-					part.AssemblyLinearVelocity = linVel
-					part.AssemblyAngularVelocity = angVel
-				end
-			end
-		end)
-		return true
 	end
 
 	local function doFlingPlayer(target)
@@ -1778,7 +1189,6 @@ do
 		local myRoot = getLocalRoot()
 		if not targetRoot or not myRoot then return false end
 
-		-- Noclip temporário (sempre, não depende de MM2State)
 		local home = myRoot.CFrame
 		local spin = Instance.new("BodyAngularVelocity")
 		spin.MaxTorque = Vector3.one * math.huge
@@ -1817,45 +1227,10 @@ do
 		return true
 	end
 
-	local function pickFlingTargets()
-		local myRoot = getLocalRoot()
-		if not myRoot then return {} end
-		local myPos = myRoot.Position
-		local range = Settings.FlingRange
-		local list = {}
-		if Settings.FlingMode == 2 and currentTarget and currentTarget.Model then
-			local m = currentTarget.Model
-			if m.Parent and not Players:GetPlayerFromCharacter(m) then
-				local parts = getTargetParts(m)
-				if parts and parts.Root then
-					list[1] = { Model = m, Parts = parts, D = 0 }
-				end
-			end
-			return list
-		end
-		for model, hum in pairs(humanoids) do
-			if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
-				local plr = Players:GetPlayerFromCharacter(model)
-				if not plr and Settings.FlingBots then
-					local parts = getTargetParts(model)
-					if parts and parts.Root then
-						local d = (parts.Root.Position - myPos).Magnitude
-						if d <= range then
-							list[#list + 1] = { Model = model, Parts = parts, D = d }
-						end
-					end
-				end
-			end
-		end
-		table.sort(list, function(a, b) return a.D < b.D end)
-		if Settings.FlingMode == 3 and #list > 1 then list = { list[1] } end
-		return list
-	end
-
 	Fling.doFlingPlayer = doFlingPlayer
 
 	Fling.flingSelected = function()
-		local name = Settings.FlingTargetPlayer
+		local name = Settings.FlingPlayerTarget
 		if not name or name == "" or name == "Nenhum" then
 			notify("Fling: nenhum player selecionado", "off")
 			return
@@ -1871,10 +1246,6 @@ do
 			notify("Fling: player inválido", "off")
 			return
 		end
-		if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
-			notify("Fling: player sem personagem", "off")
-			return
-		end
 		task.spawn(function()
 			local ok = doFlingPlayer(target)
 			notify(ok and ("Fling: " .. target.DisplayName) or "Fling: falhou", ok and "on" or "off")
@@ -1882,36 +1253,27 @@ do
 	end
 
 	Fling.step = function()
-		if Settings.Fling then
-			local now = os.clock()
-			local jitter = (math.random() - 0.5) * 0.04
-			if now - lastFling >= Settings.FlingRepeat + jitter then
-				lastFling = now
-				local myHum, myRoot = getLocalHumanoid(), getLocalRoot()
-				if myHum and myHum.Health > 0 then
-					flingActive = true
-					local targets = pickFlingTargets()
-					if #targets == 0 then
-						if now - lastNotify > 4 then
-							lastNotify = now
-							notify("Fling: nenhum BOT no alcance", "off")
-						end
-					else
-						local power = Settings.FlingPower
-						local mode = Settings.FlingMode2 or 2
-						for i = 1, #targets do
-							doFling(targets[i].Parts.Root, myRoot, power, mode)
-						end
+		if not Settings.Fling then return end
+		local now = os.clock()
+		if now - lastFling < Settings.FlingRepeat then return end
+		lastFling = now
+		local myHum, myRoot = getLocalHumanoid(), getLocalRoot()
+		if not myHum or myHum.Health <= 0 then return end
+		local myPos = myRoot.Position
+		local range = Settings.FlingRange
+		for model, hum in pairs(humanoids) do
+			if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
+				local plr = Players:GetPlayerFromCharacter(model)
+				if not plr then
+					local r = getRoot(model)
+					if r and (r.Position - myPos).Magnitude <= range then
+						doFling(r, myRoot, Settings.FlingPower, Settings.FlingMode2 or 2)
 					end
 				end
 			end
-		elseif flingActive then
-			flingActive = false
-			restoreAllCollide()
 		end
+		restoreAllCollide()
 	end
-
-	Fling.isActive = function() return flingActive end
 end
 
 --------------------------------------------------------------------
@@ -1922,11 +1284,52 @@ local defaultJumpPower, defaultUseJumpPower = 50, true
 local lastSafe = nil
 local ANTIFLING_MAX_SPIN = 40
 local lastFlingNotify = 0
+local stableOld, stableNew = nil, nil
+local stableTimer = 0
+local wsActive, jpActive = false, false
+local SPEED_RAMP_BASE = 240
+local wsCurrent = 16
+local walkLastPos = nil
+local walkCooldown = 0
+local walkUserGoal = nil
+local walkPulledAt = 0
+local walkProbeAt = 0
 
 LocalPlayer.CharacterAdded:Connect(function()
 	lastSafe = nil
 	wsActive, jpActive = false, false
 end)
+
+local function walkGuard(hum, root, dt)
+	local pos = root.Position
+	local last = walkLastPos
+	walkLastPos = pos
+	if not Settings.WalkAutoLimit or not last or Settings.Fly then return end
+	local now = os.clock()
+	if now < antiKillHold + 0.5 then return end
+	local move = hum.MoveDirection
+	local flatMove = Vector3.new(move.X, 0, move.Z)
+	if flatMove.Magnitude < 0.1 then return end
+	flatMove = flatMove.Unit
+	local disp = Vector3.new(pos.X - last.X, 0, pos.Z - last.Z)
+	local back = -disp:Dot(flatMove)
+	local limit = math.max(6, wsCurrent * dt * 2.5)
+	if now >= walkCooldown and back > limit and wsCurrent > 20 then
+		walkUserGoal = walkUserGoal or Settings.WalkSpeed
+		walkCooldown = now + 1.2
+		walkPulledAt = now
+		local new = math.max(16, math.floor(wsCurrent * 0.7))
+		wsCurrent = new
+		Settings.WalkSpeed = math.max(16, new)
+		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+		notify("Velocidade: puxão detectado, reduzida para " .. new, "off")
+	elseif walkUserGoal and now - walkPulledAt > 6 and now - walkProbeAt > 3
+		and Settings.WalkSpeed < walkUserGoal then
+		walkProbeAt = now
+		Settings.WalkSpeed = math.min(walkUserGoal, math.ceil(Settings.WalkSpeed * 1.12))
+		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+	end
+end
 
 RunService.Heartbeat:Connect(function(dt)
 	pcall(function()
@@ -1976,8 +1379,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if Settings.Fly and root and hum.Health > 0 then
 			updateFly(hum, root, dt)
-			flyGuard(root, dt)
-		elseif flyObjs or flyPlatformSet then
+		elseif flyObjs or flyPlat then
 			destroyFly()
 		end
 
@@ -1989,8 +1391,7 @@ RunService.Heartbeat:Connect(function(dt)
 			if Settings.WalkSpeedOn then limit = math.max(limit, Settings.WalkSpeed * 3) end
 			local fastOwn = Settings.WalkSpeedOn or Settings.Fly
 			local spinLimit = fastOwn and 120 or ANTIFLING_MAX_SPIN
-			local yLimit = math.max(limit, Settings.JumpOn and Settings.JumpPower * 3 or 0)
-			local flung = horizontal > limit or v.Y > yLimit
+			local flung = horizontal > limit or v.Y > 80
 				or root.AssemblyAngularVelocity.Magnitude > spinLimit
 			if flung then
 				if Settings.AntiFlingRestore and stableOld and not fastOwn then
@@ -1998,12 +1399,6 @@ RunService.Heartbeat:Connect(function(dt)
 				end
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				for part in pairs(myParts) do
-					if part:IsA("BasePart") and part ~= root then
-						part.AssemblyLinearVelocity = Vector3.zero
-						part.AssemblyAngularVelocity = Vector3.zero
-					end
-				end
 				local state = hum:GetState()
 				if state == Enum.HumanoidStateType.FallingDown
 					or state == Enum.HumanoidStateType.Ragdoll
@@ -2030,17 +1425,15 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		if root and hum.Health > 0 then
-			if root.Position.Y < Settings.AntiVoidY then
-				if Settings.AntiVoid then
-					local target = lastSafe
-					if not target then
-						local spawn = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-						target = spawn and (spawn.CFrame + Vector3.new(0, 5, 0)) or CFrame.new(0, 50, 0)
-					end
-					LocalPlayer.Character:PivotTo(target)
-					root.AssemblyLinearVelocity = Vector3.zero
-					root.AssemblyAngularVelocity = Vector3.zero
+			if root.Position.Y < Settings.AntiVoidY and Settings.AntiVoid then
+				local target = lastSafe
+				if not target then
+					local spawn = Workspace:FindFirstChildWhichIsA("SpawnLocation", true)
+					target = spawn and (spawn.CFrame + Vector3.new(0, 5, 0)) or CFrame.new(0, 50, 0)
 				end
+				LocalPlayer.Character:PivotTo(target)
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
 			elseif hum.FloorMaterial ~= Enum.Material.Air then
 				lastSafe = root.CFrame + Vector3.new(0, 3, 0)
 			end
@@ -2100,7 +1493,6 @@ do
 					minX = pct(xs, 0.01) - 60, maxX = pct(xs, 0.99) + 60,
 					minZ = pct(zs, 0.01) - 60, maxZ = pct(zs, 0.99) + 60,
 				}
-				notify("Anti Kill: limites do mapa calculados", "info")
 			end
 			scanning = false
 		end)
@@ -2140,10 +1532,6 @@ do
 		LocalPlayer.Character:PivotTo(safeTarget())
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
-		for part in pairs(myParts) do
-			part.AssemblyLinearVelocity = Vector3.zero
-			part.AssemblyAngularVelocity = Vector3.zero
-		end
 		if flyObjs and flyObjs.LV then flyObjs.LV.VectorVelocity = Vector3.zero end
 		if now - notifyAt > 2 then
 			notifyAt = now
@@ -2182,12 +1570,9 @@ do
 				danger, why = true, "queda no vazio"
 			end
 			if not danger and not Settings.Fly then
-				if airborne and now >= nextFall
-					and (vel.Y < -40 or (Settings.Noclip and vel.Y < -12)) then
+				if airborne and now >= nextFall and vel.Y < -40 then
 					nextFall = now + 0.05
-					if noGround(pos) and noGround(pos + Vector3.new(vel.X, 0, vel.Z) * 0.3) then
-						danger, why = true, "queda sem chão"
-					end
+					if noGround(pos) then danger, why = true, "queda sem chão" end
 				end
 				local m = Settings.AntiKillMargin
 				if not danger and bounds and m > 0 and now >= nextOut then
@@ -2231,8 +1616,6 @@ LocalPlayer.Idled:Connect(function()
 		VirtualUser:ClickButton2(Vector2.new())
 	end)
 end)
-
-LocalPlayer.CharacterAdded:Connect(function() spectating = false end)
 
 local Lit = Lighting
 local LIT_GROUPS = {
@@ -2284,7 +1667,7 @@ end)
 local camFovDefault = nil
 
 --------------------------------------------------------------------
--- ESP
+-- ESP (corrigido - sem linha verde gigante)
 --------------------------------------------------------------------
 local espRoot = Instance.new("Frame")
 espRoot.Name = "ESP"
@@ -2323,9 +1706,8 @@ local function mkText(parent, size)
 end
 
 local function newEsp(model)
-	local o = { Model = model, Seen = 0, H = 5.5, HAt = -1, Tool = "", ToolAt = -1 }
+	local o = { Model = model, Seen = 0, H = 5.5, HAt = -1 }
 	local hl = Instance.new("Highlight")
-	hl.Name = "TTHighlight"
 	hl.Adornee = model
 	hl.Enabled = false
 	hl.FillTransparency = 0.65
@@ -2358,13 +1740,7 @@ local function newEsp(model)
 	o.HpFill.Parent = o.HpBg
 	o.Name = mkText(holder, 13)
 	o.Name.AnchorPoint = Vector2.new(0.5, 1)
-	o.ToolLbl = mkText(holder, 11)
-	o.ToolLbl.AnchorPoint = Vector2.new(0.5, 0)
-	o.Dot = mkFrame(holder, true)
-	o.Dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	o.Dot.Size = UDim2.fromOffset(6, 6)
 	o.Tracer = mkFrame(holder)
-	o.Tracer.AnchorPoint = Vector2.new(0.5, 0.5)
 	return o
 end
 
@@ -2406,6 +1782,7 @@ local function drawEsp(o, t, dist, now, vp)
 	end
 	local h = o.H
 	local center = Camera:WorldToViewportPoint(rootPos)
+	-- IMPORTANTE: se o alvo está atrás da câmera, esconder tudo (evita linha verde)
 	if center.Z <= 0 then
 		o.Holder.Visible = false
 		return
@@ -2464,47 +1841,22 @@ local function drawEsp(o, t, dist, now, vp)
 		o.Name.Text = (plr and plr.DisplayName or model.Name) .. "  [" .. math.floor(dist) .. "m]"
 		o.Name.TextColor3 = color
 		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
-		o.Name.ZIndex = 5
 	else
 		o.Name.Visible = false
 	end
 
-	if Settings.ESPTool then
-		if now - o.ToolAt > 0.5 then
-			o.ToolAt = now
-			local tool = model:FindFirstChildOfClass("Tool")
-			o.Tool = tool and tool.Name or ""
-		end
-		o.ToolLbl.Visible = o.Tool ~= ""
-		o.ToolLbl.Text = o.Tool
-		o.ToolLbl.Position = UDim2.fromOffset(px(center.X), y + boxH + 2)
-	else
-		o.ToolLbl.Visible = false
-	end
-
-	if Settings.ESPHeadDot then
-		local head = model:FindFirstChild("Head")
-		if head and head:IsA("BasePart") then
-			local hp, on = Camera:WorldToViewportPoint(head.Position)
-			o.Dot.Visible = on
-			o.Dot.BackgroundColor3 = color
-			o.Dot.Position = UDim2.fromOffset(px(hp.X), px(hp.Y))
-		else
-			o.Dot.Visible = false
-		end
-	else
-		o.Dot.Visible = false
-	end
-
-	if Settings.Tracers then
+	if Settings.Tracers and center.Z > 0 then
 		local p1
 		if Settings.TracerOrigin == 1 then p1 = Vector2.new(vp.X / 2, vp.Y)
 		elseif Settings.TracerOrigin == 2 then p1 = vp / 2
-		else p1 = getAimOrigin() end
+		elseif isMobile then p1 = vp / 2
+		else p1 = UserInputService:GetMouseLocation() end
 		local p2 = Vector2.new(center.X, center.Y)
 		local d = p2 - p1
 		local len = d.Magnitude
-		if len > 2 then
+		-- Limita o comprimento do tracer ao tamanho da tela (evita linha infinita)
+		local maxLen = math.max(vp.X, vp.Y)
+		if len > 2 and len < maxLen then
 			o.Tracer.Visible = true
 			o.Tracer.BackgroundColor3 = color
 			o.Tracer.Size = UDim2.fromOffset(len, 1.5)
@@ -2574,12 +1926,15 @@ end
 --------------------------------------------------------------------
 -- INTERFACE
 --------------------------------------------------------------------
+local menuOpen = false
+local refreshers = {}
+local uiRefresh = function() end
+
 local function buildUI()
 
-local TAB_TOTAL = 9
+local TAB_TOTAL = 8
 
 local menu = Instance.new("CanvasGroup")
-menu.Name = "Menu"
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
 menu.Size = UDim2.fromOffset(440, 560)
 menu.Position = UDim2.fromScale(0.5, 0.5)
@@ -2624,7 +1979,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit Universal"
+title.Text = "Test Toolkit v69"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2635,7 +1990,7 @@ subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 12
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
 subtitle.TextColor3 = Theme.SubText
-subtitle.Text = "Ctrl direito abre/fecha  •  arraste aqui"
+subtitle.Text = "Ctrl direito abre/fecha"
 subtitle.Parent = titleBar
 
 local closeBtn = Instance.new("TextButton")
@@ -2709,7 +2064,6 @@ local tabCount = 0
 local tabOrder = {}
 local tabSlot = {}
 local tabTotalNow = TAB_TOTAL
-local refreshers = {}
 
 local function selectTab(name, instant)
 	if activeTab == name then return end
@@ -2743,9 +2097,7 @@ end
 local function layoutTabs()
 	local vis = {}
 	for _, n in ipairs(tabOrder) do
-		if (n ~= "buttons" or isMobile) and (n ~= "keys" or not isMobile) then
-			vis[#vis + 1] = n
-		end
+		vis[#vis + 1] = n
 	end
 	local total = math.max(#vis, 1)
 	for _, btn in pairs(tabButtons) do btn.Visible = false end
@@ -2776,7 +2128,6 @@ local function newPage(name, label)
 	page.CanvasSize = UDim2.new()
 	page.Visible = false
 	page.Parent = pagesHolder
-
 	local layout = Instance.new("UIListLayout")
 	layout.Padding = UDim.new(0, 6)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -2861,18 +2212,10 @@ local function hover(row)
 		tween(row, { BackgroundColor3 = Theme.Panel }, 0.12)
 		tween(scale, { Scale = 1 }, 0.1)
 	end)
-	row.MouseButton1Down:Connect(function() tween(scale, { Scale = 0.97 }, 0.07) end)
-	row.MouseButton1Up:Connect(function() tween(scale, { Scale = 1 }, 0.16, Enum.EasingStyle.Back) end)
 end
 
-local UPPER_ACCENTS = {
-	["á"] = "Á", ["à"] = "À", ["â"] = "Â", ["ã"] = "Ã", ["é"] = "É", ["ê"] = "Ê",
-	["í"] = "Í", ["ó"] = "Ó", ["ô"] = "Ô", ["õ"] = "Õ", ["ú"] = "Ú", ["ç"] = "Ç",
-}
 local function upperPT(t)
-	return (string.gsub(t, utf8.charpattern, function(c)
-		return UPPER_ACCENTS[c] or string.upper(c)
-	end))
+	return string.upper(t)
 end
 
 local function addSection(text)
@@ -2978,9 +2321,6 @@ local function addCycle(text, key, options, desc, onChange)
 	render()
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = (Settings[key] % #options) + 1
-		currentTarget = nil
-		table.clear(targetCache)
-		candTime = -1
 		render()
 		if onChange then onChange() end
 	end)
@@ -3051,16 +2391,6 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 		if onChange then onChange() end
 	end
 
-	hit.MouseEnter:Connect(function()
-		tween(handle, { Size = UDim2.fromOffset(16, 16) }, 0.12, Enum.EasingStyle.Back)
-		tween(valueLabel, { TextColor3 = Theme.Text }, 0.12)
-	end)
-	hit.MouseLeave:Connect(function()
-		if sliderDrag ~= setFromX then
-			tween(handle, { Size = UDim2.fromOffset(12, 12) }, 0.12)
-			tween(valueLabel, { TextColor3 = Theme.SubText }, 0.12)
-		end
-	end)
 	hit.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
@@ -3089,19 +2419,15 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
-local rebinding = nil
-local keybindRows = {}
-
 local function addKeybind(text, key, desc, allowMouse)
 	local row = newRow(desc and 42 or 36, "TextButton")
 	row.Visible = not isMobile
-	table.insert(keybindRows, row)
 	hover(row)
 	local l = rowLabel(row, "", desc, 30)
 	local function render() l.Text = text .. ": [" .. Settings[key].Name .. "]" end
 	render()
 	row.MouseButton1Click:Connect(function()
-		l.Text = text .. ": pressione uma tecla... (Esc cancela)"
+		l.Text = text .. ": pressione uma tecla..."
 		rebinding = {
 			mouse = allowMouse,
 			apply = function(bind)
@@ -3112,6 +2438,16 @@ local function addKeybind(text, key, desc, allowMouse)
 				render()
 			end,
 		}
+	end)
+end
+
+local function addButton(text, desc, onClick)
+	local row = newRow(desc and 42 or 36, "TextButton")
+	hover(row)
+	local l = rowLabel(row, text, desc, 30)
+	l.TextColor3 = Theme.Accent
+	row.MouseButton1Click:Connect(function()
+		if onClick then onClick() end
 	end)
 end
 
@@ -3200,16 +2536,6 @@ local function addDropdown(text, key, desc, onChange)
 	table.insert(refreshers, render)
 end
 
-local function addButton(text, desc, onClick)
-	local row = newRow(desc and 42 or 36, "TextButton")
-	hover(row)
-	local l = rowLabel(row, text, desc, 30)
-	l.TextColor3 = Theme.Accent
-	row.MouseButton1Click:Connect(function()
-		if onClick then onClick() end
-	end)
-end
-
 --------------------------------------------------------------------
 -- ABAS
 --------------------------------------------------------------------
@@ -3219,88 +2545,76 @@ addSection("Modo de mira")
 addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
 addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente para o alvo")
 addToggle("Silent Aim", "UseSilentAim", "Redireciona o tiro pro alvo sem mexer na câmera")
-addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" },
-	"Segurar/alternar pela tecla da mira; Automático = sempre", function() aimActive = false end)
-addCycle("Parte do corpo", "AimPart", { "Cabeça", "Corpo", "Automático" },
-	"Automático mira a parte visível mais perto do cursor")
-addCycle("Prioridade", "Priority", { "Perto do cursor", "Perto de mim", "Menos vida" },
-	"Qual inimigo é escolhido primeiro")
-addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem é considerado alvo")
+addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" }, "Como ativa", function() aimActive = false end)
+addCycle("Parte do corpo", "AimPart", { "Cabeça", "Corpo", "Automático" }, "Parte alvo")
+addCycle("Prioridade", "Priority", { "Perto do cursor", "Perto de mim", "Menos vida" }, "Qual inimigo escolher")
+addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addToggle("Ignorar equipe", "TeamCheck", "Não mira em aliados")
-addToggle("Checar parede", "AimWallCheck", "Só mira em quem você enxerga")
+addToggle("Checar parede", "AimWallCheck", "Só mira em quem enxerga")
 
 addSection("Legit Aim")
-addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mira mais rápida e firme")
-addSlider("Ângulo de trava", "SnapAngle", 0, 30, 1, 0, "Abaixo deste ângulo cola no alvo")
-addToggle("Trava firme ao atirar", "FireLock", "Sem suavização enquanto atira")
+addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mais rápida")
+addSlider("Ângulo de trava", "SnapAngle", 0, 30, 1, 0, "Cola abaixo deste")
+addToggle("Trava ao atirar", "FireLock", "Sem suavização enquanto atira")
 addToggle("Mirar no cursor", "AimAtCursor", "PC: alvo sob o cursor")
 
 addSection("Silent Aim")
-addSlider("FOV do Silent", "SilentAimFOV", 50, 800, 10, 0, "Raio do Silent Aim")
-addToggle("Só alvos visíveis", "SilentAimVisible", "Só atira em alvos com linha de visão")
+addSlider("FOV do Silent", "SilentAimFOV", 50, 800, 10, 0, "Raio")
+addToggle("Só alvos visíveis", "SilentAimVisible", "Só atira com linha de visão")
 
 addSection("Trigger Bot")
-addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente quando o alvo está sob a mira")
-addToggle("Sempre ativo", "TriggerBotAlways", "Atira mesmo sem segurar a tecla da mira")
-addToggle("Só alvos visíveis", "TriggerVisible", "Só atira se tiver linha de visão")
-addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = bolinha no centro")
-addSlider("Delay entre tiros", "TriggerDelay", 0.01, 1, 0.01, 2, "Tempo mínimo entre tiros")
+addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente")
+addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar")
+addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
+addSlider("Delay entre tiros", "TriggerDelay", 0.01, 1, 0.01, 2, "Tempo mínimo")
 
 addSection("Tiro e previsão")
-addCycle("Tipo de tiro", "ShotType", { "Instantâneo", "Projétil", "Automático" }, "Método de previsão")
+addCycle("Tipo de tiro", "ShotType", { "Instantâneo", "Projétil", "Automático" }, "Método")
 addToggle("Previsão automática", "AutoPredict", "Compensa ping e movimento")
 addSlider("Força da previsão", "PredictScale", 0, 2, 0.05, 2, "Ajuste fino")
-addSlider("Compensação manual", "Prediction", 0, 0.5, 0.01, 2, "Segundos à frente")
-addSlider("Velocidade da bala", "BulletSpeed", 0, 1000, 10, 0, "0 = sem previsão de voo")
 
 addSection("FOV do Legit")
 addToggle("Limitar pelo FOV", "FOVEnabled", "Só mira dentro do círculo")
 addSlider("Raio do FOV", "FOVRadius", 20, 600, 5, 0, "Pixels")
 addSlider("Distância máxima", "AimMaxDist", 0, 2000, 50, 0, "0 = sem limite")
 
-newPage("hitbox", "Hitbox")
+addSection("Teclas (PC)")
+addKeybind("Tecla da mira", "AimKey", "Ativa a mira", true)
+addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
 
+newPage("hitbox", "Hitbox")
 addSection("Hitbox Expander")
-addToggle("Hitbox Expander", "HitboxExpander", "Aumenta a hitbox dos players próximos", function()
+addToggle("Hitbox Expander", "HitboxExpander", "Aumenta a hitbox", function()
 	if not Settings.HitboxExpander then pcall(HitboxExpander.restoreAll) end
 end)
-addToggle("Invisível (não muda visual)", "HitboxInvisible", "Hitbox fica transparente")
-addToggle("Checar parede", "HitboxWallCheck", "Só expande alvos visíveis")
+addToggle("Invisível (não muda visual)", "HitboxInvisible", "Hitbox transparente")
 addToggle("Ignorar aliados", "HitboxIgnoreAllies", "Não expande aliados")
-addSlider("Tamanho da hitbox", "HitboxSize", 5, 30, 1, 0, "Tamanho em studs")
-addSlider("Alcance da hitbox", "HitboxRange", 10, 1000, 10, 0, "Distância máxima")
-
-addSection("Partes para expandir")
+addSlider("Tamanho", "HitboxSize", 5, 30, 1, 0, "Studs")
+addSlider("Alcance", "HitboxRange", 10, 1000, 10, 0, "Distância máxima")
+addSection("Partes")
 addToggle("Cabeça (Head)", "ExpandHead", "Expande a cabeça")
-addToggle("Torso (R6)", "ExpandTorso", "Expande o Torso (R6)")
-addToggle("UpperTorso (R15)", "ExpandUpperTorso", "Expande o UpperTorso (R15)")
-addToggle("LowerTorso (R15)", "ExpandLowerTorso", "Expande o LowerTorso (R15)")
+addToggle("Torso (R6)", "ExpandTorso", "")
+addToggle("UpperTorso (R15)", "ExpandUpperTorso", "")
+addToggle("LowerTorso (R15)", "ExpandLowerTorso", "")
 
 newPage("esp", "ESP")
-
 addSection("ESP")
 addToggle("ESP", "ESP", "Mostra alvos")
 addToggle("Ver através de paredes", "Wallhack", "Contorno atrás de objetos")
-addToggle("Contorno colorido", "ESPHighlight", "Mais pesado; desligue se cair FPS")
+addToggle("Contorno colorido", "ESPHighlight", "Mais pesado")
 addToggle("Cor arco-íris", "Rainbow", "Cor animada")
-addToggle("Mostrar aliados", "ESPTeammates", "Aliados em azul")
 addCycle("Caixa", "ESPBox", { "Desligada", "Completa", "Cantos" }, "Moldura")
 addToggle("Nomes e distância", "ShowNames", "Texto acima")
 addToggle("Barra de vida", "ShowHealth", "Barra verde/vermelha")
-addToggle("Ponto na cabeça", "ESPHeadDot", "Marca cabeça")
-addToggle("Item na mão", "ESPTool", "Ferramenta do alvo")
-
 addSection("Linhas (tracers)")
 addToggle("Linhas até os alvos", "Tracers", "Linha da tela")
 addCycle("Origem da linha", "TracerOrigin", { "Baixo", "Centro", "Cursor" }, "De onde sai")
-
 addSection("Limites")
 addSlider("Distância máxima", "ESPMaxDist", 0, 3000, 50, 0, "0 = sem limite")
 addSlider("Máx. de alvos", "ESPMaxTargets", 1, 30, 1, 0, "Menos = mais FPS")
 addSlider("Transparência do preenchimento", "ESPFillTrans", 0, 1, 0.05, 2, "0 = sólido")
 
 newPage("player", "Jogador")
-
 addSection("Movimento")
 addToggle("Velocidade", "WalkSpeedOn", "Muda WalkSpeed")
 addSlider("Valor da velocidade", "WalkSpeed", 16, 5000, 5, 0, "Padrão 16")
@@ -3310,181 +2624,70 @@ addSlider("Valor do pulo", "JumpPower", 50, 900, 5, 0, "Padrão 50")
 addToggle("Pulo infinito", "InfJump", "Pula no ar")
 addToggle("Voo", "Fly", "Espaço sobe, Ctrl desce")
 addSlider("Velocidade do voo", "FlySpeed", 10, 5000, 5, 0, "Studs/s")
-addToggle("Voo seguro (auto)", "FlyAutoLimit", "Anti-puxão do voo")
 addToggle("Noclip", "Noclip", "Atravessa paredes")
-
+addSection("Teclas (PC)")
+addKeybind("Tecla do voo", "FlyKey", "Liga/desliga voo")
+addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 addSection("Invisibilidade (Seat Bug)")
-addToggle("Invisível (Seat Bug)", "SeatInvisible", "Ativa a invisibilidade via Seat Bug", function()
-	pcall(SeatInvisible.toggle)
+addToggle("Invisível (Seat Bug)", "SeatInvisible", "Ativa a invisibilidade", function()
+	if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
 end)
-addButton("Auto-detectar coordenadas", "Procura um lugar seguro", function()
-	local pos = SeatInvisible.findSafeCoords()
-	Settings.SeatInvisibleX = math.floor(pos.X)
-	Settings.SeatInvisibleY = math.floor(pos.Y)
-	Settings.SeatInvisibleZ = math.floor(pos.Z)
-	if uiRefresh then uiRefresh() end
-	notify("Coordenadas detectadas", "on")
-end)
-addSlider("Coord X", "SeatInvisibleX", -10000, 10000, 1, 0, "Posição X")
-addSlider("Coord Y", "SeatInvisibleY", -500, 5000, 1, 0, "Posição Y")
-addSlider("Coord Z", "SeatInvisibleZ", -10000, 10000, 1, 0, "Posição Z")
 
 newPage("misc", "Extras")
-
 addSection("Visão")
 addToggle("Luz total", "FullBright", "Remove escuridão")
 addToggle("Sem neblina", "NoFog", "Enxerga longe")
 addToggle("FOV da câmera", "CamFOVOn", "Muda FOV")
 addSlider("Valor do FOV", "CamFOV", 40, 120, 1, 0, "Padrão 70")
-addToggle("Anti-AFK", "AntiAFK", "Evita kick por inatividade")
-
+addToggle("Anti-AFK", "AntiAFK", "Evita kick")
 addSection("Interface")
-addToggle("HUD", "ShowHUD", "FPS, ping e estado")
+addToggle("HUD", "ShowHUD", "FPS e estados")
 addToggle("Mover HUD", "HUDEdit", "Arraste o HUD")
-addButton("Resetar posição do HUD", "Volta pro canto", function()
-	Settings.HUDX, Settings.HUDY = 10, 10
-	notify("HUD voltou pro canto", "info")
-end)
 addToggle("Notificações", "Notifications", "Avisos ao ligar/desligar")
-addCycle("Dispositivo", "DeviceMode", { "Automático", "PC", "Mobile" }, "Layout", refreshDevice)
 addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido", function()
 	if menuOpen then menu.GroupTransparency = Settings.MenuAlpha end
 end)
 
-addSection("Configuração")
-addButton("Salvar configuração", "Guarda as opções", function()
-	local ok = pcall(function()
-		if not writefile then error("sem writefile") end
-		writefile(CONFIG_FILE, HttpService:JSONEncode(serializeSettings()))
-	end)
-	notify(ok and "Salvo" or "Não disponível", ok and "on" or "off")
-end)
-addButton("Apagar configuração", "Volta ao padrão", function()
-	local ok = pcall(function()
-		if delfile and isfile and isfile(CONFIG_FILE) then delfile(CONFIG_FILE)
-		else error("nada") end
-	end)
-	notify(ok and "Apagado" or "Nada para apagar", ok and "info" or "off")
-end)
-
 newPage("fling", "Fling")
-
 addSection("Fling Bots")
-addToggle("Fling Bots", "Fling", "Arremessa bots próximos")
-addCycle("Modo de alvo", "FlingMode", { "Todos perto", "Alvo da mira", "Mais próximo" }, "Qual bot é arremessado")
-addCycle("Tipo de arremesso", "FlingMode2", { "Empurrar (leve)", "Mandar pro void" }, "Tipo do arremesso")
+addToggle("Fling Bots", "Fling", "Arremessa bots")
+addCycle("Tipo de arremesso", "FlingMode2", { "Empurrar", "Mandar pro void" }, "Tipo")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
-addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Empurrar: distância")
-addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Tempo entre aplicações")
-
+addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Força")
+addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
-addInfo("Escolha o player e clique em Fling Player. O script te prende nele e gira.", 40)
-addDropdown("FlingTargetPlayer", "Escolher Player", "Seleciona o alvo do fling")
+addInfo("Escolha o player e clique em Fling Player.", 30)
+addDropdown("FlingPlayerTarget", "Escolher Player", "Alvo do fling")
 addButton("Fling Player", "Arremessa o player selecionado (ou tecla B)", function()
 	Fling.flingSelected()
 end)
-addButton("Fling Player (Alvo da mira)", "Arremessa o player sob a mira", function()
-	local target = nil
-	if currentTarget and currentTarget.Player then
-		target = currentTarget.Player
-	else
-		local best, bd
-		local mo = UserInputService:GetMouseLocation()
-		for _, plr in ipairs(Players:GetPlayers()) do
-			if plr ~= LocalPlayer and plr.Character then
-				local root = plr.Character:FindFirstChild("HumanoidRootPart")
-				if root then
-					local sp, on = Camera:WorldToViewportPoint(root.Position)
-					if on then
-						local d = (Vector2.new(sp.X, sp.Y) - mo).Magnitude
-						if not bd or d < bd then best, bd = plr, d end
-					end
-				end
-			end
-		end
-		target = best
-	end
-	if not target then
-		notify("Fling: nenhum alvo próximo", "off")
-		return
-	end
-	task.spawn(function()
-		local ok = Fling.doFlingPlayer(target)
-		notify(ok and ("Fling: " .. target.DisplayName) or "Fling: falhou", ok and "on" or "off")
-	end)
-end)
-
-addSection("Configurações do Fling Player")
-addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 10, 0.5, 1, "Tempo preso no alvo")
+addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 10, 0.5, 1, "Tempo preso")
 addSlider("Força de giro", "FlingPlayerSpin", 1000, 500000, 1000, 0, "BodyAngularVelocity")
+addSection("Teclas (PC)")
+addKeybind("Tecla do Fling Bots", "FlingKey", "Liga/desliga Fling")
+addKeybind("Tecla do Fling Player", "FlingPlayerKey", "Arremessa o player selecionado")
 
 newPage("security", "Segurança")
-
-addSection("Status")
-local secStatus = addInfo("Carregando estado...", 44)
-
 addSection("Proteção contra morte")
-addToggle("Anti Void", "AntiVoid", "Volta à última posição segura se cair no vazio")
-addToggle("Anti Kill", "AntiKill", "Não deixa morrer ao sair do mapa")
-addSlider("Folga do Anti Kill", "AntiKillMargin", 0, 1000, 25, 0, "Distância além da borda")
-addButton("Recalcular limites do mapa", "Use depois que o mapa mudar", function()
-	AntiKill.recalc()
-end)
-
+addToggle("Anti Void", "AntiVoid", "Volta se cair no vazio")
+addToggle("Anti Kill", "AntiKill", "Não deixa morrer no vazio")
+addSlider("Folga do Anti Kill", "AntiKillMargin", 0, 1000, 25, 0, "Distância")
+addButton("Recalcular limites", "Use após o mapa carregar", function() AntiKill.recalc() end)
 addSection("Proteção contra arremesso")
 addToggle("Anti Fling", "AntiFling", "Bloqueia arremessos")
-addToggle("Voltar ao ponto estável", "AntiFlingRestore", "Após um arremesso, retorna")
-addSlider("Limite do Anti Fling", "AntiFlingSpeed", 50, 500, 10, 0, "Velocidade que conta como arremesso")
-
+addToggle("Voltar ao ponto estável", "AntiFlingRestore", "Retorna a posição")
+addSlider("Limite", "AntiFlingSpeed", 50, 500, 10, 0, "Velocidade")
 addSection("Proteção contra kick")
-addToggle("Anti AFK", "AntiAFK", "Evita ser expulso por inatividade")
-
-table.insert(refreshers, function()
-	if secStatus and secStatus.Parent then
-		local parts = {}
-		if Settings.AntiVoid then parts[#parts + 1] = "AntiVoid" end
-		if Settings.AntiKill then parts[#parts + 1] = "AntiKill" end
-		if Settings.AntiFling then parts[#parts + 1] = "AntiFling" end
-		if Settings.AntiAFK then parts[#parts + 1] = "AntiAFK" end
-		secStatus.Text = #parts == 0
-			and "Nenhuma proteção ativa"
-			or ("Ativas: " .. table.concat(parts, ", "))
-	end
-end)
-
-newPage("keys", "Teclas")
-
-if isMobile then
-	addSection("Aviso")
-	addInfo("Rebind de teclas só funciona no PC. No mobile use os botões na tela.", 40)
-else
-	addSection("Teclas do Menu")
-	addKeybind("Menu (Ctrl direito)", "MENU_KEY", "Abre/fecha o menu do Universal")
-	addSection("Aim")
-	addKeybind("Tecla da Mira", "AimKey", "Ativa a mira (botão do mouse)", true)
-	addKeybind("Trocar de Alvo", "SwitchKey", "Próximo inimigo")
-	addSection("Movimento")
-	addKeybind("Voo", "FlyKey", "Liga/desliga voo")
-	addKeybind("Noclip", "NoclipKey", "Liga/desliga noclip")
-	addSection("Fling")
-	addKeybind("Fling Bots", "FlingKey", "Liga/desliga Fling Bots")
-	addKeybind("Fling Player", "FlingPlayerKey", "Arremessa o player selecionado")
-end
+addToggle("Anti AFK", "AntiAFK", "Evita kick")
 
 newPage("buttons", "Botões")
-
 addSection("Botões na tela")
-addToggle("Botão MIRA", "ShowBtnAim", "Ativa/segura mira")
-addToggle("Botão VOO", "ShowBtnFly", "Liga/desliga voo")
-addToggle("Botão NOCLIP", "ShowBtnNoclip", "Liga/desliga noclip")
-addToggle("Botão DESCER", "ShowBtnDown", "Desce voando")
-addToggle("Botão ESP", "ShowBtnEsp", "Liga/desliga ESP")
-addToggle("Botão LINHA", "ShowBtnTrace", "Liga/desliga tracers")
-addToggle("Botão PULO", "ShowBtnInf", "Liga/desliga InfJump")
-addToggle("Botão FLING", "ShowBtnFling", "Liga/desliga Fling")
-
+addToggle("Botão MIRA", "ShowBtnAim", "")
+addToggle("Botão VOO", "ShowBtnFly", "")
+addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
+addToggle("Botão ESP", "ShowBtnEsp", "")
+addToggle("Botão FLING", "ShowBtnFling", "")
 addSection("Aparência")
-addToggle("Editar posições", "MobileEdit", "Arraste os botões")
 addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
 addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 
@@ -3526,7 +2729,7 @@ local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	b.InputEnded:Connect(function(input)
 		if (input.UserInputType == Enum.UserInputType.Touch
 			or input.UserInputType == Enum.UserInputType.MouseButton1)
-			and onUp and not Settings.MobileEdit then
+			and onUp then
 			onUp()
 		end
 	end)
@@ -3559,14 +2762,8 @@ makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.54), "ShowBtnFly", function() return
 	function() Settings.Fly = not Settings.Fly; refreshAll() end)
 makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.66), "ShowBtnNoclip", function() return Settings.Noclip end,
 	function() Settings.Noclip = not Settings.Noclip; refreshAll() end)
-makeMobileBtn("DESCER", UDim2.fromScale(0.8, 0.54), "ShowBtnDown", function() return mobileFlyDown end,
-	function() mobileFlyDown = true end, function() mobileFlyDown = false end)
 makeMobileBtn("ESP", UDim2.fromScale(0.8, 0.66), "ShowBtnEsp", function() return Settings.ESP end,
 	function() Settings.ESP = not Settings.ESP; refreshAll() end)
-makeMobileBtn("LINHA", UDim2.fromScale(0.8, 0.42), "ShowBtnTrace", function() return Settings.Tracers end,
-	function() Settings.Tracers = not Settings.Tracers; refreshAll() end)
-makeMobileBtn("PULO", UDim2.fromScale(0.9, 0.78), "ShowBtnInf", function() return Settings.InfJump end,
-	function() Settings.InfJump = not Settings.InfJump; refreshAll() end)
 makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() return Settings.Fling end,
 	function() Settings.Fling = not Settings.Fling; refreshAll() end)
 
@@ -3592,31 +2789,18 @@ local function updateMobileBtns()
 	end
 end
 
-local function applyDeviceLayout()
-	for _, r in ipairs(keybindRows) do r.Visible = not isMobile end
-	subtitle.Text = isMobile and "Botão TT abre/fecha  •  arraste para mover"
-		or "Ctrl direito abre/fecha  •  arraste para mover"
-	layoutTabs()
-	if not isMobile and activeTab == "buttons" then selectTab("aim") end
-	if isMobile and activeTab == "keys" then selectTab("aim") end
-	updateMobileBtns()
-end
-table.insert(deviceListeners, applyDeviceLayout)
-
 layoutTabs()
 selectTab("aim", true)
-applyDeviceLayout()
+updateMobileBtns()
 
 --------------------------------------------------------------------
 -- MENU OPEN/CLOSE
 --------------------------------------------------------------------
-local menuOpen = false
-
 local function refreshAll()
 	for _, refresh in ipairs(refreshers) do refresh() end
 end
-
 uiRefresh = refreshAll
+_G.TT_uiRefresh = refreshAll
 
 local function baseScale()
 	local vp = Camera.ViewportSize
@@ -3642,15 +2826,20 @@ end
 _G.TT_setMenu = setMenu
 _G.TT_isMenuOpen = function() return menuOpen end
 
+local function toggleMenu() setMenu(not menuOpen) end
 closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
 
 refreshAll()
+
+return { setMenu = setMenu, isMobile = isMobile }
 
 end -- fim buildUI
 
 --------------------------------------------------------------------
 -- TECLAS
 --------------------------------------------------------------------
+local rebinding = nil
+
 local function matchesBind(input, bind)
 	if typeof(bind) ~= "EnumItem" then return false end
 	if bind.EnumType == Enum.KeyCode then return input.KeyCode == bind end
@@ -3682,9 +2871,7 @@ UserInputService.InputBegan:Connect(function(input)
 	if UserInputService:GetFocusedTextBox() then return end
 
 	if input.KeyCode == Settings.MENU_KEY then
-		if _G.TT_setMenu then
-			_G.TT_setMenu(not _G.TT_isMenuOpen())
-		end
+		if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
 		return
 	end
 
@@ -3770,7 +2957,6 @@ local lastFps = 60
 
 RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Value + 2, function(dt)
 	local now = os.clock()
-
 	fpsFrames += 1
 	fpsAcc += dt
 	if fpsAcc >= 0.5 then
@@ -3778,11 +2964,22 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 		fpsFrames, fpsAcc = 0, 0
 	end
 
+	local myRoot = getLocalRoot()
+	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
+	local aimOrigin
+	if isFirstPerson then
+		aimOrigin = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	elseif isMobile then
+		local vp = Camera.ViewportSize
+		aimOrigin = Vector2.new(vp.X / 2, vp.Y / 2)
+	else
+		aimOrigin = UserInputService:GetMouseLocation()
+	end
+
 	local showFov = Settings.FOVEnabled and Settings.AimEnabled and not spectating and isLegit()
 	fovCircle.Visible = showFov
 	if showFov then
-		local o = getAimOrigin()
-		fovCircle.Position = UDim2.fromOffset(o.X, o.Y)
+		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		local d = Settings.FOVRadius * 2
 		fovCircle.Size = UDim2.fromOffset(d, d)
 	end
@@ -3790,8 +2987,7 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 	local showSilentFov = Settings.AimEnabled and not spectating and isSilent()
 	silentFovCircle.Visible = showSilentFov
 	if showSilentFov then
-		local o = getAimOrigin()
-		silentFovCircle.Position = UDim2.fromOffset(o.X, o.Y)
+		silentFovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		local d = Settings.SilentAimFOV * 2
 		silentFovCircle.Size = UDim2.fromOffset(d, d)
 	end
@@ -3799,8 +2995,7 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 	local showTriggerFov = Settings.TriggerBot and not spectating
 	triggerFovCircle.Visible = showTriggerFov
 	if showTriggerFov then
-		local o = getAimOrigin()
-		triggerFovCircle.Position = UDim2.fromOffset(o.X, o.Y)
+		triggerFovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		local d = math.max(Settings.TriggerFOV * 2, 4)
 		triggerFovCircle.Size = UDim2.fromOffset(d, d)
 	end
@@ -3818,7 +3013,7 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 	btnAcc += dt
 	if btnAcc >= 0.1 then
 		btnAcc = 0
-		updateMobileBtns()
+		if _G.TT_updateMobileBtns then pcall(_G.TT_updateMobileBtns) end
 	end
 
 	hud.Visible = Settings.ShowHUD or Settings.HUDEdit
@@ -3840,21 +3035,102 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
 		if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
-		if Settings.SeatInvisible then parts[#parts + 1] = "SeatInvis" end
 		hud.Text = table.concat(parts, "  •  ")
 	end
 end)
 
 --------------------------------------------------------------------
+-- SEAT INVISIBILITY
+--------------------------------------------------------------------
+local SeatInvisible = {}
+do
+	local mySeat = nil
+	local active = false
+
+	local function cleanupSeat()
+		local e = workspace:FindFirstChild("invischair")
+		if e then pcall(function() e:Destroy() end) end
+		mySeat = nil
+	end
+
+	local function activate()
+		local char = LocalPlayer.Character
+		if not char then return end
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+		cleanupSeat()
+		local sp = hrp.CFrame
+		local tp = Vector3.new(Settings.SeatInvisibleX, Settings.SeatInvisibleY, Settings.SeatInvisibleZ)
+		char:MoveTo(tp)
+		task.wait(0.15)
+		local st = Instance.new("Seat")
+		st.Name = "invischair"
+		st.Anchored = false
+		st.CanCollide = false
+		st.Transparency = 1
+		st.Position = tp
+		st.Parent = workspace
+		mySeat = st
+		local wl = Instance.new("Weld")
+		wl.Part0 = st
+		wl.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+		wl.Parent = st
+		task.wait()
+		st.CFrame = sp
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0.5 end
+		end
+	end
+
+	local function deactivate()
+		cleanupSeat()
+		if LocalPlayer.Character then
+			for _, d in ipairs(LocalPlayer.Character:GetDescendants()) do
+				if d:IsA("BasePart") or d:IsA("Decal") then d.Transparency = 0 end
+			end
+		end
+	end
+
+	SeatInvisible.toggle = function()
+		active = not active
+		Settings.SeatInvisible = active
+		if active then activate() else deactivate() end
+		if uiRefresh then pcall(uiRefresh) end
+	end
+
+	task.spawn(function()
+		while task.wait(0.5) do
+			if active and (not mySeat or not mySeat.Parent) then
+				active = false
+				Settings.SeatInvisible = false
+				deactivate()
+				if uiRefresh then pcall(uiRefresh) end
+			end
+		end
+	end)
+
+	LocalPlayer.CharacterAdded:Connect(function()
+		active = false
+		Settings.SeatInvisible = false
+		cleanupSeat()
+	end)
+end
+_G.TT_SeatInvisible = SeatInvisible
+
+--------------------------------------------------------------------
 -- INICIAR
 --------------------------------------------------------------------
-local okUI, errUI = pcall(buildUI)
-if okUI then
-	bootShow("TestToolkit Universal v68 carregado  •  "
+local result = { setMenu = nil, isMobile = isMobile }
+local okUI, errUI = pcall(function()
+	result = buildUI()
+end)
+if okUI and type(result) == "table" and result.setMenu then
+	_G.TT_setMenu = result.setMenu
+	bootShow("TestToolkit v69 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] Universal v68 carregado com sucesso!")
+	print("[TestToolkit] v69 carregado com sucesso!")
 else
-	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
-	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
+	warn("[TestToolkit] erro na interface: " .. tostring(errUI or "resultado inválido"))
+	bootShow("TestToolkit: erro: " .. tostring(errUI or "resultado inválido"), Color3.fromRGB(255, 90, 90))
 end
