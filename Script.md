@@ -1,12 +1,11 @@
 --[[
-    TestToolkit v60 - LocalScript (100% cliente)
+    TestToolkit v61 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v60:
-      - Corrigido: ESP e Aimbot não pegam corpos caídos
-      - Seat Invisibility mantido no original
-      - Aba MM2 separada que SÓ aparece no Murder Mystery 2
-      - Detecção de função por ferramentas (Knife=Murder, Gun=Sheriff)
+    v61:
+      - Aimbot MM2 inteligente (Inocente→Murder, Murder→Todos, Sheriff→Murder)
+      - Grab Gun Dropped + Auto Grab (só funciona se for Inocente)
+      - Aba MM2 separada que só aparece no Murder Mystery 2
 ]]
 
 local Players = game:GetService("Players")
@@ -28,9 +27,9 @@ end)
 -- DETECÇÃO DE JOGO (MM2)
 --------------------------------------------------------------------
 local MM2_PLACE_IDS = {
-	[142823291] = true,  -- Murder Mystery 2
-	[12278902] = true,   -- Murder Mystery 2 (alt)
-	[10231138] = true,   -- Murder Mystery 2 (alt)
+	[142823291] = true,
+	[12278902] = true,
+	[10231138] = true,
 }
 
 local GAME_NAME = ""
@@ -80,7 +79,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v60 carregando...")
+bootShow("TestToolkit v61 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -129,12 +128,15 @@ local Settings = {
 
 	-- MM2
 	MM2Mode = true,
+	MM2SmartAim = true,
 	MM2InnocentColor = Color3.fromRGB(0, 255, 0),
 	MM2MurderColor = Color3.fromRGB(255, 0, 0),
 	MM2SheriffColor = Color3.fromRGB(0, 100, 255),
 	MM2ShowDroppedGun = true,
 	MM2DroppedGunColor = Color3.fromRGB(255, 255, 0),
-	MM2DropRange = 300,
+	MM2GrabGun = false,
+	MM2AutoGrabGun = false,
+	MM2GrabRange = 200,
 
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
@@ -157,6 +159,7 @@ local Settings = {
 	ShowBtnFly = true, ShowBtnNoclip = true, ShowBtnDown = true,
 	ShowBtnEsp = true, ShowBtnTrace = true, ShowBtnInf = true,
 	ShowBtnAim = true, ShowBtnFling = true,
+	ShowBtnGrabGun = true,
 }
 
 local MENU_KEY = Enum.KeyCode.RightControl
@@ -168,7 +171,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, PerfMode = true, FPSUnlock = true, MobileEdit = true,
 	HUDEdit = true, Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true, MM2Mode = true,
+	SeatInvisible = true, MM2Mode = true, MM2GrabGun = true, MM2AutoGrabGun = true,
 }
 
 local function serializeSettings()
@@ -309,11 +312,12 @@ local function isTeammate(model, plr)
 end
 
 --------------------------------------------------------------------
--- MM2 DETECÇÃO DE FUNÇÃO (POR FERRAMENTAS)
+-- MM2 DETECÇÃO DE FUNÇÃO
 --------------------------------------------------------------------
 local MM2 = {}
 do
 	local roleCache = setmetatable({}, { __mode = "k" })
+	local myRoleCache = { v = nil, t = 0 }
 	local dropCache = setmetatable({}, { __mode = "k" })
 	local dropAt = 0
 	local dropped = {}
@@ -337,7 +341,6 @@ do
 		return false
 	end
 
-	-- Verifica se a ferramenta está equipada ou na mochila
 	local function hasTool(model, plr, checkFn)
 		if model then
 			for _, tool in ipairs(model:GetChildren()) do
@@ -383,11 +386,37 @@ do
 		return role
 	end
 
-	function MM2.clearCache()
-		table.clear(roleCache)
+	function MM2.getMyRole()
+		local now = os.clock()
+		if now - myRoleCache.t < 0.4 then return myRoleCache.v end
+		myRoleCache.t = now
+		local role = MM2.getRole(LocalPlayer.Character, LocalPlayer)
+		myRoleCache.v = role
+		return role
 	end
 
-	-- Detecta armas dropadas no chão
+	-- Verifica se um alvo é válido pelo MM2
+	function MM2.isValidTarget(model, plr)
+		if not IS_MM2 or not Settings.MM2SmartAim then return true end
+		local myRole = MM2.getMyRole()
+		local theirRole = MM2.getRole(model, plr)
+		if not myRole or not theirRole then return true end
+		if myRole == "innocent" then
+			return theirRole == "murder"
+		elseif myRole == "murder" then
+			return true
+		elseif myRole == "sheriff" then
+			return theirRole == "murder"
+		end
+		return true
+	end
+
+	function MM2.clearCache()
+		table.clear(roleCache)
+		myRoleCache.v = nil
+		myRoleCache.t = 0
+	end
+
 	function MM2.getDroppedGuns()
 		local now = os.clock()
 		if now - dropAt < 0.3 then return dropped end
@@ -412,7 +441,7 @@ do
 end
 
 --------------------------------------------------------------------
--- TARGETS (VERIFICAÇÃO DE CORPO CAÍDO)
+-- TARGETS (VERIFICAÇÃO DE CORPO CAÍDO + MM2 FILTRO)
 --------------------------------------------------------------------
 local humanoids = {}
 local rootOf = setmetatable({}, { __mode = "k" })
@@ -499,22 +528,30 @@ local function getTargets(purpose)
 			if plr then modeOk = plr ~= LocalPlayer and mode ~= 2
 			else modeOk = mode ~= 1 end
 			if modeOk then
-				local mate = isTeammate(model, plr)
-				local include
-				if purpose == "esp" then
-					include = (not mate) or Settings.ESPTeammates
-				else
-					include = (not mate) or (not Settings.TeamCheck)
+				-- Filtro MM2 (apenas para aim)
+				if purpose == "aim" and IS_MM2 and Settings.MM2SmartAim then
+					if not MM2.isValidTarget(model, plr) then
+						modeOk = false
+					end
 				end
-				if include then
-					local root = getRoot(model)
-					if root then
-						local e = entries[model]
-						if not e then e = {}; entries[model] = e end
-						e.Model = model; e.Humanoid = hum; e.Root = root
-						e.Player = plr; e.Teammate = mate
-						n += 1
-						list[n] = e
+				if modeOk then
+					local mate = isTeammate(model, plr)
+					local include
+					if purpose == "esp" then
+						include = (not mate) or Settings.ESPTeammates
+					else
+						include = (not mate) or (not Settings.TeamCheck)
+					end
+					if include then
+						local root = getRoot(model)
+						if root then
+							local e = entries[model]
+							if not e then e = {}; entries[model] = e end
+							e.Model = model; e.Humanoid = hum; e.Root = root
+							e.Player = plr; e.Teammate = mate
+							n += 1
+							list[n] = e
+						end
 					end
 				end
 			end
@@ -657,7 +694,7 @@ local function getCandidates(force)
 		local t = r.T
 		local part = pickAim(t.Model, t.Humanoid)
 		if part then
-			local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+			local sp, onScreen = Camera.WorldToViewportPoint(part.Position)
 			if onScreen then
 				local dist = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
 				if not fovOn or dist <= Settings.FOVRadius then
@@ -675,6 +712,103 @@ local function getCandidates(force)
 	candCache = out
 	candLock = false
 	return out
+end
+
+--------------------------------------------------------------------
+-- GRAB GUN DROPPED (SÓ INOCENTE)
+--------------------------------------------------------------------
+local GrabGun = {}
+do
+	local lastGrab = 0
+
+	-- Função para pegar uma arma dropada
+	local function tryGrabGun(tool)
+		if not tool or not tool.Parent then return false end
+		if not tool:IsA("Tool") then return false end
+		local handle = tool:FindFirstChild("Handle")
+		if not handle or not handle:IsA("BasePart") then return false end
+
+		-- Verifica se é Inocente
+		local myRole = MM2.getMyRole()
+		if myRole ~= "innocent" then
+			notify("Grab Gun: você não é Inocente", "off")
+			return false
+		end
+
+		-- Teleporta a arma para perto do jogador (o servidor aceita se for Inocente)
+		local myRoot = getLocalRoot()
+		if not myRoot then return false end
+		local targetPos = myRoot.Position + myRoot.CFrame.LookVector * 3 + Vector3.new(0, 1, 0)
+		pcall(function()
+			tool:SetPrimaryPartCFrame(CFrame.new(targetPos))
+			-- Tenta pegar via Humanoid:EquipTool se o servidor permitir
+			local hum = getLocalHumanoid()
+			if hum then
+				pcall(function() hum:EquipTool(tool) end)
+			end
+		end)
+		return true
+	end
+
+	-- Pega a arma dropada mais próxima
+	function GrabGun.grabNearest()
+		if not IS_MM2 then
+			notify("Grab Gun: só funciona no MM2", "off")
+			return false
+		end
+		local myRole = MM2.getMyRole()
+		if myRole ~= "innocent" then
+			notify("Grab Gun: você não é Inocente", "off")
+			return false
+		end
+
+		local guns = MM2.getDroppedGuns()
+		if #guns == 0 then
+			notify("Grab Gun: nenhuma arma dropada", "off")
+			return false
+		end
+
+		local myRoot = getLocalRoot()
+		if not myRoot then return false end
+		local myPos = myRoot.Position
+
+		local best, bestD = nil, math.huge
+		for _, tool in ipairs(guns) do
+			local handle = tool:FindFirstChild("Handle")
+			if handle then
+				local d = (handle.Position - myPos).Magnitude
+				if d < bestD then
+					best, bestD = tool, d
+				end
+			end
+		end
+
+		if not best then
+			notify("Grab Gun: nenhuma arma no alcance", "off")
+			return false
+		end
+
+		if bestD > Settings.MM2GrabRange then
+			notify("Grab Gun: arma muito longe (" .. math.floor(bestD) .. "m)", "off")
+			return false
+		end
+
+		if tryGrabGun(best) then
+			notify("Grab Gun: pegando arma (" .. math.floor(bestD) .. "m)", "on")
+			return true
+		end
+		return false
+	end
+
+	-- Auto grab: chama a cada 0.5s
+	function GrabGun.step()
+		if not Settings.MM2AutoGrabGun or not IS_MM2 then return end
+		if MM2.getMyRole() ~= "innocent" then return end
+		local now = os.clock()
+		if now - lastGrab < 0.5 then return end
+		lastGrab = now
+		GrabGun.grabNearest()
+	end
 end
 
 --------------------------------------------------------------------
@@ -699,10 +833,6 @@ local Theme = {
 	SubText = Color3.fromRGB(150, 150, 172),
 	Good = Color3.fromRGB(80, 255, 130),
 	Bad = Color3.fromRGB(255, 90, 90),
-	Murder = Color3.fromRGB(255, 0, 0),
-	Innocent = Color3.fromRGB(0, 255, 0),
-	Sheriff = Color3.fromRGB(0, 100, 255),
-	Dropped = Color3.fromRGB(255, 255, 0),
 }
 
 local function tween(obj, props, t, style, dir)
@@ -1265,6 +1395,7 @@ RunService.RenderStepped:Connect(function()
 		end
 		updateSilentTarget()
 		updateTriggerBot()
+		GrabGun.step()
 	end)
 end)
 
@@ -1286,7 +1417,10 @@ RunService:BindToRenderStep("TestToolkitAim", Enum.RenderPriority.Camera.Value +
 		if currentTarget then
 			local m, hum = currentTarget.Model, currentTarget.Humanoid
 			if not m.Parent or not isAlive(hum) then currentTarget = nil
-			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
+			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil
+			elseif IS_MM2 and Settings.MM2SmartAim and not MM2.isValidTarget(m, currentTarget.Player) then
+				currentTarget = nil
+			end
 		end
 
 		if not currentTarget then
@@ -2558,7 +2692,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v60"
+title.Text = "Test Toolkit v61"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -3094,19 +3228,10 @@ local function addColorPicker(text, key, desc)
 
 	row.MouseButton1Click:Connect(function()
 		local presets = {
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(0, 200, 0),
-			Color3.fromRGB(0, 150, 0),
-			Color3.fromRGB(50, 255, 50),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(200, 0, 0),
-			Color3.fromRGB(255, 50, 50),
-			Color3.fromRGB(0, 100, 255),
-			Color3.fromRGB(0, 150, 255),
-			Color3.fromRGB(100, 150, 255),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(255, 200, 0),
-			Color3.fromRGB(255, 255, 255),
+			Color3.fromRGB(0, 255, 0), Color3.fromRGB(0, 200, 0), Color3.fromRGB(0, 150, 0),
+			Color3.fromRGB(255, 0, 0), Color3.fromRGB(200, 0, 0), Color3.fromRGB(255, 50, 50),
+			Color3.fromRGB(0, 100, 255), Color3.fromRGB(0, 150, 255), Color3.fromRGB(100, 150, 255),
+			Color3.fromRGB(255, 255, 0), Color3.fromRGB(255, 200, 0), Color3.fromRGB(255, 255, 255),
 		}
 		local cur = Settings[key]
 		local idx = 1
@@ -3604,25 +3729,42 @@ addSlider("Transparência do preenchimento", "ESPFillTrans", 0, 1, 0.05, 2, "0 =
 newPage("mm2", "MM2")
 
 addSection("Murder Mystery 2")
-addInfo("Este modo só aparece quando o jogo é o Murder Mystery 2. "
-	.. "A função de cada jogador é detectada pelas ferramentas no inventário: "
-	.. "quem tem FACAA = Murder, quem tem ARMA = Sheriff, o resto = Inocente.", 70)
+addInfo("Modo MM2 ativo. Detecta funções por ferramentas: FACAA = Murder, "
+	.. "ARMA = Sheriff, resto = Inocente.", 40)
 
-addToggle("Ativar modo MM2", "MM2Mode", "Colore jogadores por função e mostra a arma dropada")
+addToggle("Ativar modo MM2", "MM2Mode", "Colore jogadores por função")
+addToggle("Mira inteligente MM2", "MM2SmartAim",
+	"Inocente→Murder, Murder→Todos, Sheriff→Murder")
+
+addSection("ESP")
 addColorPicker("Cor do Inocente", "MM2InnocentColor", "Verde por padrão")
 addColorPicker("Cor do Murder", "MM2MurderColor", "Vermelho por padrão")
 addColorPicker("Cor do Sheriff", "MM2SheriffColor", "Azul por padrão")
+
+addSection("Arma dropada")
 addToggle("Destacar arma dropada", "MM2ShowDroppedGun", "Mostra a arma no chão em amarelo")
 addColorPicker("Cor da arma dropada", "MM2DroppedGunColor", "Amarelo por padrão")
 
-addSection("Status (debug)")
-local mm2Status = addInfo("Aguardando...", 40)
+addSection("Grab Gun (só funciona se for Inocente)")
+addInfo("⚠ Só o Inocente consegue pegar a arma dropada. Se você for Murder ou Sheriff, "
+	.. "estas opções não funcionam.", 40)
+addToggle("Grab Gun Dropped", "MM2GrabGun",
+	"Pega a arma dropada mais próxima (clique pra ativar)", function()
+		if Settings.MM2GrabGun then
+			GrabGun.grabNearest()
+			Settings.MM2GrabGun = false
+			refreshAll()
+		end
+	end)
+addToggle("Auto Grab Gun Dropped", "MM2AutoGrabGun",
+	"Pega automaticamente quando uma arma aparece")
+addSlider("Alcance do Grab", "MM2GrabRange", 10, 500, 10, 0, "Studs")
+
+addSection("Status")
+local mm2Status = addInfo("Aguardando...", 66)
 
 table.insert(refreshers, function()
 	if mm2Status and mm2Status.Parent then
-		local count = 0
-		for _ in pairs(humanois or {}) do count += 1 end
-		-- Conta funções detectadas
 		local murd, sher, inno = 0, 0, 0
 		for model, hum in pairs(humanoids) do
 			if hum and hum.Parent and hum.Health > 0 then
@@ -3634,10 +3776,24 @@ table.insert(refreshers, function()
 			end
 		end
 		local drops = #MM2.getDroppedGuns()
+		local myRole = MM2.getMyRole()
+		local myRoleText = "?"
+		if myRole == "innocent" then myRoleText = "INOCENTE"
+		elseif myRole == "murder" then myRoleText = "MURDER"
+		elseif myRole == "sheriff" then myRoleText = "SHERIFF" end
+
+		local smartTargets = ""
+		if Settings.MM2SmartAim then
+			if myRole == "innocent" or myRole == "sheriff" then
+				smartTargets = " (mirando só em Murder)"
+			elseif myRole == "murder" then
+				smartTargets = " (mirando em todos)"
+			end
+		end
+
 		mm2Status.Text = string.format(
-			"Jogo: %s\nMurder: %d | Sheriff: %d | Inocente: %d | Armas dropadas: %d",
-			IS_MM2 and "MM2 ✓" or "Não é MM2",
-			murd, sher, inno, drops)
+			"Você é: %s%s\nMurder: %d | Sheriff: %d | Inocente: %d | Armas dropadas: %d",
+			myRoleText, smartTargets, murd, sher, inno, drops)
 	end
 end)
 
@@ -3664,10 +3820,9 @@ addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 
 addSection("Invisibilidade (Seat Bug)")
 addInfo("⚠ Usa bug do Seat pra te tirar da sincronia do servidor. "
-	.. "Funciona em jogos sem validação de posição server-side. "
-	.. "Se for kickado/revertido, o jogo tem anti-cheat server-side.", 60)
+	.. "Funciona em jogos sem validação de posição server-side.", 60)
 addToggle("Invisível (Seat Bug)", "SeatInvisible",
-	"Ativa a invisibilidade via bug do Seat (réplica do script Ziaa)", function()
+	"Ativa a invisibilidade via bug do Seat", function()
 		pcall(SeatInvisible.toggle)
 	end)
 addButton("Auto-detectar coordenadas", "Procura um lugar seguro no mapa", function()
@@ -3684,9 +3839,6 @@ addSlider("Coord Y", "SeatInvisibleY", -500, 5000, 1, 0, "Posição Y")
 addSlider("Coord Z", "SeatInvisibleZ", -10000, 10000, 1, 0, "Posição Z")
 addSlider("Duração (0 = infinito)", "SeatInvisibleDuration", 0, 300, 1, 0, "Segundos")
 addToggle("Voltar ao desligar", "SeatInvisibleReturn", "Retorna pra posição original")
-
-addSection("Proteção")
-addInfo("Todas as proteções também estão na aba SEGURANÇA. Use-a para controle rápido.", 32)
 
 --------------------------------------------------------------------
 -- ABA: EXTRAS
@@ -3809,6 +3961,7 @@ addToggle("Botão ESP", "ShowBtnEsp", "Liga/desliga ESP")
 addToggle("Botão LINHA", "ShowBtnTrace", "Liga/desliga tracers")
 addToggle("Botão PULO", "ShowBtnInf", "Liga/desliga InfJump")
 addToggle("Botão FLING", "ShowBtnFling", "Liga/desliga Fling")
+addToggle("Botão GRAB GUN", "ShowBtnGrabGun", "Pega a arma dropada (só Inocente)")
 
 addSection("Aparência")
 addToggle("Editar posições", "MobileEdit", "Arraste os botões")
@@ -3896,6 +4049,11 @@ makeMobileBtn("PULO", UDim2.fromScale(0.9, 0.78), "ShowBtnInf", function() retur
 	function() toggleSetting("InfJump", "Pulo infinito") end)
 makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() return Settings.Fling end,
 	function() toggleSetting("Fling", "Fling") end)
+makeMobileBtn("GRAB", UDim2.fromScale(0.7, 0.42), "ShowBtnGrabGun", function()
+	return GrabGun.isActive and GrabGun.isActive() or false
+end, function()
+	GrabGun.grabNearest()
+end)
 
 local mobileShown = false
 local function updateMobileBtns()
@@ -3984,6 +4142,8 @@ UserInputService.InputBegan:Connect(function(input)
 		toggleSetting("Fly", "Voo")
 	elseif input.KeyCode == Settings.FlingKey then
 		toggleSetting("Fling", "Fling")
+	elseif input.KeyCode == Enum.KeyCode.H and IS_MM2 then
+		GrabGun.grabNearest()
 	end
 end)
 
@@ -4085,7 +4245,6 @@ local function destroyEsp(model, o)
 	espObjs[model] = nil
 end
 
--- ESP para arma dropada
 local droppedEsp = {}
 
 local function makeDropEsp(tool)
@@ -4482,7 +4641,14 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 			else aimType = "OFF" end
 			parts[#parts + 1] = "Mira: " .. aimType
 		end
-		if IS_MM2 and Settings.MM2Mode then parts[#parts + 1] = "MM2" end
+		if IS_MM2 and Settings.MM2Mode then
+			local myRole = MM2.getMyRole()
+			local roleShort = "?"
+			if myRole == "innocent" then roleShort = "INOC"
+			elseif myRole == "murder" then roleShort = "MURD"
+			elseif myRole == "sheriff" then roleShort = "SHER" end
+			parts[#parts + 1] = "MM2: " .. roleShort
+		end
 		if Settings.Fly then parts[#parts + 1] = "Voo" end
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
@@ -4503,7 +4669,7 @@ end -- fim buildUI
 local okUI, errUI = pcall(buildUI)
 if okUI then
 	local gameTag = IS_MM2 and " (MM2 detectado)" or ""
-	bootShow("TestToolkit v60 carregado" .. gameTag .. "  •  "
+	bootShow("TestToolkit v61 carregado" .. gameTag .. "  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
