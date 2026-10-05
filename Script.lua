@@ -1,6 +1,5 @@
 --[[
-    TestToolkit v96
-    - AIMBOT REESCRITO (RenderStepped + mousemoverel, sem Scriptable)
+    TestToolkit v96 (sem aimbot)
     - Wall check + Team check + Trigger bot
     - Sem watchdog, sem travar câmera
     - Fling Bots + Fling Player Safe + K1LAS1K
@@ -35,16 +34,10 @@ local Settings = {
 	ESPBox = 1, Tracers = false, TracerOrigin = 1,
 
 	TargetMode = 3,
-	AimEnabled = true, UseLegitAim = true,
-	AimMode = 2, AimPart = 3, AimWallCheck = true,
-	Smoothness = 0.25, SnapAngle = 3,
-	FireLock = true, Priority = 1,
-	AimKey = Enum.KeyCode.Q,
-	SwitchKey = Enum.KeyCode.E,
-	FOVEnabled = true, FOVRadius = 250, AimMaxDist = 0,
 
 	TriggerBot = false, TriggerBotAlways = false,
 	TriggerFOV = 60, TriggerVisible = true, TriggerDelay = 0.03,
+	TriggerKey = Enum.KeyCode.Q,
 
 	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
 	HitboxInvisible = false,
@@ -82,7 +75,7 @@ local Settings = {
 	Notifications = true, MenuAlpha = 0.1,
 
 	MobileBtnSize = 56, MobileBtnAlpha = 0.15,
-	ShowBtnAim = true, ShowBtnFly = true, ShowBtnNoclip = true,
+	ShowBtnFly = true, ShowBtnNoclip = true,
 	ShowBtnEsp = true, ShowBtnFling = true,
 }
 
@@ -247,7 +240,6 @@ local function isIgnorableBlocker(hit)
 end
 
 local function hasLineOfSight(part, model)
-	if not Settings.AimWallCheck then return true end
 	if not part or not part.Parent then return false end
 	if not LocalPlayer.Character then return false end
 
@@ -282,6 +274,12 @@ local function getAimOrigin()
 		return Vector2.new(vp.X / 2, vp.Y / 2)
 	end
 	return UserInputService:GetMouseLocation()
+end
+
+-- Pega a parte de mira do alvo (usado pelo trigger bot)
+local function getAimPart(target)
+	local m = target.Model
+	return m:FindFirstChild("Head") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso") or target.Root
 end
 
 --------------------------------------------------------------------
@@ -331,28 +329,12 @@ local function stroke(obj, color, transparency, thickness)
 	return s
 end
 
-local fovCircle = Instance.new("Frame")
-fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
-fovCircle.BackgroundTransparency = 1
-fovCircle.Parent = gui
-corner(fovCircle, 9999)
-stroke(fovCircle, Color3.new(1, 1, 1), 0.15, 1.5)
-
 local triggerFovCircle = Instance.new("Frame")
 triggerFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 triggerFovCircle.BackgroundTransparency = 1
 triggerFovCircle.Parent = gui
 corner(triggerFovCircle, 9999)
 stroke(triggerFovCircle, Color3.fromRGB(255, 100, 100), 0.4, 1.5)
-
-local lockMarker = Instance.new("Frame")
-lockMarker.AnchorPoint = Vector2.new(0.5, 0.5)
-lockMarker.Size = UDim2.fromOffset(24, 24)
-lockMarker.BackgroundTransparency = 1
-lockMarker.Visible = false
-lockMarker.Parent = gui
-corner(lockMarker, 9999)
-stroke(lockMarker, Theme.Bad, 0, 2)
 
 -- Toasts
 local toastHolder = Instance.new("Frame")
@@ -483,176 +465,17 @@ RunService.Stepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- AIMBOT v96 — REESCRITO DO ZERO
---------------------------------------------------------------------
-local aimActive = false
-local firing = false
-local currentTarget = nil
-local aimDebugFound = 0
-local aimDebugTarget = "nenhum"
-local aimDebugMoved = false
-
-local mousemoveFn = nil
-if type(mousemoverel) == "function" then
-	mousemoveFn = mousemoverel
-end
-
-UserInputService.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then firing = true end
-end)
-UserInputService.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then firing = false end
-end)
-
-local function isAiming()
-	return Settings.AimEnabled and (aimActive or Settings.AimMode == 3)
-end
-
--- Pega a parte de mira do alvo
-local function getAimPart(target)
-	local m = target.Model
-	if Settings.AimPart == 1 then
-		return m:FindFirstChild("Head") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso") or target.Root
-	elseif Settings.AimPart == 2 then
-		return m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso") or m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Head")
-	else
-		return m:FindFirstChild("Head") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso") or target.Root
-	end
-end
-
--- Retorna candidatos ordenados (mais perto do cursor primeiro)
-local function getCandidates()
-	local list = {}
-	local origin = getAimOrigin()
-	local camPos = Camera.CFrame.Position
-	local fovLimit = Settings.FOVEnabled and Settings.FOVRadius or math.huge
-	local maxDist = Settings.AimMaxDist
-
-	for _, t in ipairs(getTargets("aim")) do
-		local part = getAimPart(t)
-		if part and part.Parent then
-			if not Settings.AimWallCheck or hasLineOfSight(part, t.Model) then
-				local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
-				if onScreen and sp.Z > 0 then
-					local dist2D = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
-					local dist3D = (part.Position - camPos).Magnitude
-					if dist2D <= fovLimit and (maxDist == 0 or dist3D <= maxDist) then
-						table.insert(list, {
-							Model = t.Model,
-							Humanoid = t.Humanoid,
-							Player = t.Player,
-							Part = part,
-							Dist2D = dist2D,
-							Dist3D = dist3D,
-						})
-					end
-				end
-			end
-		end
-	end
-
-	table.sort(list, function(a, b)
-		if Settings.Priority == 2 then return a.Dist3D < b.Dist3D end
-		return a.Dist2D < b.Dist2D
-	end)
-	return list
-end
-
--- Aplicar mira
-RunService.RenderStepped:Connect(function(dt)
-	-- Se não está mirando: limpa
-	if not isAiming() then
-		fovCircle.Visible = false
-		lockMarker.Visible = false
-		aimDebugFound = 0
-		aimDebugTarget = "nenhum"
-		aimDebugMoved = false
-		currentTarget = nil
-		return
-	end
-
-	local origin = getAimOrigin()
-
-	-- FOV circle
-	if Settings.FOVEnabled then
-		fovCircle.Visible = true
-		fovCircle.Position = UDim2.fromOffset(origin.X, origin.Y)
-		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
-	else
-		fovCircle.Visible = false
-	end
-
-	-- Achar alvo
-	local candidates = getCandidates()
-	aimDebugFound = #candidates
-
-	if #candidates == 0 then
-		currentTarget = nil
-		lockMarker.Visible = false
-		aimDebugTarget = "nenhum"
-		aimDebugMoved = false
-		return
-	end
-
-	local target = candidates[1]
-	currentTarget = target
-	aimDebugTarget = target.Player and target.Player.DisplayName or target.Model.Name
-
-	local sp, onScreen = Camera:WorldToViewportPoint(target.Part.Position)
-	if not onScreen then
-		lockMarker.Visible = false
-		return
-	end
-
-	-- Marcador verde
-	lockMarker.Visible = true
-	lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
-	lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
-	lockMarker.Size = UDim2.fromOffset(20, 20)
-
-	-- Mover mouse (apenas PC)
-	if isMobile then
-		aimDebugMoved = false
-		return
-	end
-	if not mousemoveFn then
-		aimDebugMoved = false
-		return
-	end
-
-	local vp = Camera.ViewportSize
-	local cx, cy = vp.X / 2, vp.Y / 2
-	local dx = sp.X - cx
-	local dy = sp.Y - cy
-
-	-- Suavização
-	local smooth = math.clamp(Settings.Smoothness, 0.01, 0.95)
-	local factor = 1 - smooth
-
-	if firing and Settings.FireLock then factor = 1 end
-
-	local moveX = dx * factor
-	local moveY = dy * factor
-
-	-- Limita movimento
-	local maxMove = 40
-	if math.abs(moveX) > maxMove then moveX = maxMove * (moveX > 0 and 1 or -1) end
-	if math.abs(moveY) > maxMove then moveY = maxMove * (moveY > 0 and 1 or -1) end
-
-	if math.abs(moveX) > 0.5 or math.abs(moveY) > 0.5 then
-		local ok = pcall(mousemoveFn, moveX, moveY)
-		aimDebugMoved = ok
-	else
-		aimDebugMoved = true
-	end
-end)
-
---------------------------------------------------------------------
 -- TRIGGER BOT
 --------------------------------------------------------------------
+local triggerHoldActive = false
 local triggerBotActive = false
 local lastTriggerShot = 0
 local triggerTargetName = "nenhum"
+
+local function isTriggerActive()
+	if not Settings.TriggerBot then return false end
+	return Settings.TriggerBotAlways or triggerHoldActive
+end
 
 local function simulateClick()
 	local mouse = LocalPlayer:GetMouse()
@@ -673,15 +496,14 @@ RunService.RenderStepped:Connect(function()
 	triggerBotActive = false
 	triggerTargetName = "nenhum"
 
-	if not Settings.TriggerBot then return end
-	if not (Settings.TriggerBotAlways or isAiming()) then return end
+	if not isTriggerActive() then return end
 
 	local origin = getAimOrigin()
 	local fov = Settings.TriggerFOV
 	local camPos = Camera.CFrame.Position
 	local best, bestD = nil, math.huge
 
-	for _, t in ipairs(getTargets("aim")) do
+	for _, t in ipairs(getTargets("trigger")) do
 		local part = getAimPart(t)
 		if part and part.Parent then
 			local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
@@ -712,7 +534,7 @@ end)
 
 -- FOV visual do trigger
 RunService.RenderStepped:Connect(function()
-	local show = Settings.TriggerBot and (Settings.TriggerBotAlways or isAiming())
+	local show = isTriggerActive()
 	triggerFovCircle.Visible = show
 	if show then
 		local o = getAimOrigin()
@@ -1813,7 +1635,7 @@ local savedMouseBehavior = nil
 local savedMouseIcon = nil
 
 local function buildUI()
-local TAB_TOTAL = isMobile and 8 or 7
+local TAB_TOTAL = isMobile and 7 or 6
 
 local menu = Instance.new("CanvasGroup")
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -2408,34 +2230,19 @@ local function addDropdown(text, key, desc, onChange)
 end
 
 --------------------------------------------------------------------
--- ABAS
+-- ABAS (aim removido)
 --------------------------------------------------------------------
-newPage("aim", "Mira")
-addSection("Modo de mira")
-addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
-addToggle("Legit Aim", "UseLegitAim", "Move o mouse até o alvo")
-addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" }, "Como ativa", function() aimActive = false end)
-addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
-addCycle("Parte", "AimPart", { "Cabeça", "Corpo", "Auto" }, "Onde mirar")
-addCycle("Prioridade", "Priority", { "Cursor", "Próximo", "Menos vida" }, "Ordem")
-addInfo("⚠️ Só mira INIMIGOS. Aliados são ignorados automaticamente.", 28)
-addToggle("Checar parede", "AimWallCheck", "Só mira se enxergar")
-addSection("Suavidade")
-addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mais rápida")
-addToggle("Trava ao atirar", "FireLock", "Sem suavização ao atirar")
-addSection("FOV")
-addToggle("Limitar pelo FOV", "FOVEnabled", "Só mira dentro do círculo")
-addSlider("Raio do FOV", "FOVRadius", 20, 800, 5, 0, "Pixels")
-addSlider("Distância máxima", "AimMaxDist", 0, 2000, 50, 0, "0 = sem limite")
+newPage("trigger", "Trigger")
 addSection("Trigger Bot")
 addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente")
-addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar Q")
+addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar a tecla")
 addToggle("Só visíveis", "TriggerVisible", "Só atira com LOS")
 addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
 addSlider("Delay", "TriggerDelay", 0.01, 1, 0.01, 2, "Entre tiros")
-addSection("Teclas (PC)")
-addKeybind("Tecla da mira", "AimKey", "Ativa/desativa a mira")
-addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
+addSection("Alvos")
+addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
+addSection("Tecla (PC)")
+addKeybind("Tecla do Trigger", "TriggerKey", "Segura para ativar")
 
 newPage("hitbox", "Hitbox")
 addSection("Hitbox Expander")
@@ -2583,7 +2390,6 @@ addToggle("Anti AFK", "AntiAFK", "Evita kick")
 if isMobile then
 	newPage("buttons", "Botões")
 	addSection("Botões na tela")
-	addToggle("Botão MIRA", "ShowBtnAim", "")
 	addToggle("Botão VOO", "ShowBtnFly", "")
 	addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
 	addToggle("Botão ESP", "ShowBtnEsp", "")
@@ -2626,11 +2432,8 @@ end
 makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil, function() return menuOpen end, function()
 	if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
 end)
-makeMobileBtn("MIRA", UDim2.fromScale(0.9, 0.42), "ShowBtnAim", function() return aimActive end, function() aimActive = true end, function()
-	if Settings.AimMode == 1 then aimActive = false end
-end)
-makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.54), "ShowBtnFly", function() return Settings.Fly end, function() Settings.Fly = not Settings.Fly end)
-makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.66), "ShowBtnNoclip", function() return Settings.Noclip end, function() Settings.Noclip = not Settings.Noclip end)
+makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.42), "ShowBtnFly", function() return Settings.Fly end, function() Settings.Fly = not Settings.Fly end)
+makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.54), "ShowBtnNoclip", function() return Settings.Noclip end, function() Settings.Noclip = not Settings.Noclip end)
 makeMobileBtn("ESP", UDim2.fromScale(0.8, 0.66), "ShowBtnEsp", function() return Settings.ESP end, function() Settings.ESP = not Settings.ESP end)
 makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() return Settings.Fling end, function() Settings.Fling = not Settings.Fling end)
 
@@ -2652,7 +2455,7 @@ local function updateMobileBtns()
 end
 
 layoutTabs()
-selectTab("aim", true)
+selectTab("trigger", true)
 updateMobileBtns()
 
 local function refreshAll()
@@ -2729,9 +2532,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v96 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v96 carregado (sem aimbot)  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v96 carregado com sucesso!")
+	print("[TestToolkit] v96 (sem aimbot) carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2749,12 +2552,8 @@ end
 UserInputService.InputBegan:Connect(function(input)
 	if UserInputService:GetFocusedTextBox() then return end
 	if rebinding then return end
-	if matchesBind(input, Settings.AimKey) then
-		if Settings.AimMode == 1 then aimActive = true
-		elseif Settings.AimMode == 2 then
-			aimActive = not aimActive
-			notify("Mira " .. (aimActive and "ativada" or "desativada"), aimActive and "on" or "off")
-		end
+	if matchesBind(input, Settings.TriggerKey) then
+		triggerHoldActive = true
 	elseif matchesBind(input, Settings.NoclipKey) then
 		Settings.Noclip = not Settings.Noclip
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
@@ -2776,8 +2575,8 @@ UserInputService.InputBegan:Connect(function(input)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if Settings.AimMode == 1 and matchesBind(input, Settings.AimKey) then
-		aimActive = false
+	if matchesBind(input, Settings.TriggerKey) then
+		triggerHoldActive = false
 	end
 end)
 
@@ -2832,10 +2631,6 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
 			if Fling.flingActive then parts[#parts + 1] = "🔥 FLING" end
-			if Settings.AimEnabled and (aimActive or Settings.AimMode == 3) then
-				parts[#parts + 1] = "🎯 " .. tostring(aimDebugFound or 0) .. " inimigos"
-				parts[#parts + 1] = "alvo: " .. tostring(aimDebugTarget or "?")
-			end
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
 			end
