@@ -569,6 +569,9 @@ local currentTarget = nil
 local silentTarget = nil
 local silentActive = false
 local firing = false
+-- CORREÇÃO: Variáveis para salvar o estado da câmera
+local aimCamSaved = false
+local aimCamOriginalType = nil
 
 UserInputService.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then firing = true end
@@ -762,7 +765,7 @@ RunService.RenderStepped:Connect(function()
 	end)
 end)
 
--- LEGIT AIM (v76 CORRIGIDO - CFrame.lookAt + slerp)
+-- LEGIT AIM (v76 - CORRIGIDO com Scriptable + toggle real)
 RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 10, function(dt)
 	local myRoot = getLocalRoot()
 	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
@@ -782,6 +785,8 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 1
 		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
 	end
+
+	local didAim = false
 
 	if isLegit() and isAiming() then
 		-- Valida alvo atual
@@ -808,30 +813,49 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 1
 
 		-- Aplica a mira
 		if currentTarget and currentTarget.Part then
+			didAim = true
+
+			-- CORREÇÃO: Força a câmera a ficar Scriptable para o jogo não resetar
+			if not aimCamSaved then
+				aimCamOriginalType = Camera.CameraType
+				aimCamSaved = true
+			end
+			pcall(function()
+				if Camera.CameraType ~= Enum.CameraType.Scriptable then
+					Camera.CameraType = Enum.CameraType.Scriptable
+				end
+			end)
+
 			local goalPos = predictPosition(currentTarget, dt)
 			local camPos = Camera.CFrame.Position
 			local toGoal = goalPos - camPos
 
 			if toGoal.Magnitude > 0.1 then
-				-- CFrame apontando EXATAMENTE para o alvo
 				local targetCF = CFrame.lookAt(camPos, goalPos)
-
-				-- Calcula ângulo entre a direção atual e o alvo
 				local currentLook = Camera.CFrame.LookVector
 				local goalDir = toGoal.Unit
 				local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
 
-				-- Fator de suavização
 				local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
 				alpha = math.clamp(alpha, 0, 1)
 
-				-- Cola quando está perto do alvo ou atirando
 				if angle <= Settings.SnapAngle then alpha = 1 end
 				if firing and Settings.FireLock then alpha = 1 end
 
-				-- SLERP: interpola APENAS a rotação, mantém a posição
-				local newRotation = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
-				Camera.CFrame = CFrame.new(camPos) * newRotation
+				-- CORREÇÃO: se o ângulo for muito grande, snap direto
+				local newRotation
+				if angle > 45 and alpha < 0.5 then
+					newRotation = targetCF.Rotation
+				else
+					newRotation = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
+				end
+
+				local finalCF = CFrame.new(camPos) * newRotation
+				Camera.CFrame = finalCF
+				-- Também atualiza o Focus para o jogo não brigar
+				pcall(function()
+					Camera.Focus = CFrame.new(goalPos)
+				end)
 			end
 
 			-- Marcador visual
@@ -845,6 +869,15 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 1
 				lockMarker.Visible = false
 			end
 		end
+	end
+
+	-- CORREÇÃO: Restaura o tipo de câmera original quando não está mirando
+	if not didAim and aimCamSaved then
+		pcall(function()
+			Camera.CameraType = aimCamOriginalType or Enum.CameraType.Custom
+		end)
+		aimCamSaved = false
+		aimCamOriginalType = nil
 	end
 
 	if Settings.AimEnabled and isSilent() and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
@@ -2672,8 +2705,11 @@ UserInputService.InputBegan:Connect(function(input)
 	if rebinding then return end
 
 	if matchesBind(input, Settings.AimKey) then
-		aimActive = true
-		if Settings.AimMode == 2 then
+		-- CORREÇÃO: toggle real do Q
+		if Settings.AimMode == 1 then
+			aimActive = true
+		elseif Settings.AimMode == 2 then
+			aimActive = not aimActive
 			notify("Mira " .. (aimActive and "ativada" or "desativada"), aimActive and "on" or "off")
 		end
 	elseif matchesBind(input, Settings.SwitchKey) then
