@@ -34,7 +34,7 @@ local Settings = {
 	-- Aim
 	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
-	AimMode = 1, AimPart = 3, AimWallCheck = true,
+	AimMode = 2, AimPart = 3, AimWallCheck = true,
 	Smoothness = 0.15, SnapAngle = 6, AutoPredict = true, PredictScale = 0.6,
 	AimAtCursor = true, Prediction = 0,
 	ShotType = 1, FireLock = true, Priority = 1,
@@ -1727,7 +1727,7 @@ local uiRefresh = function() end
 
 local function buildUI()
 
-local TAB_TOTAL = 8
+local TAB_TOTAL = isMobile and 8 or 7
 
 local menu = Instance.new("CanvasGroup")
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -2469,7 +2469,7 @@ addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Força")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
 addInfo("Escolha o player e clique em Fling Player.", 30)
-addDropdown("FlingPlayerTarget", "Escolher Player", "Alvo do fling")
+addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
 addButton("Fling Player", "Arremessa o player selecionado (ou tecla B)", function()
 	Fling.flingSelected()
 end)
@@ -2487,17 +2487,18 @@ addSlider("Limite", "AntiFlingSpeed", 50, 500, 10, 0, "Velocidade")
 addSection("Proteção contra kick")
 addToggle("Anti AFK", "AntiAFK", "Evita kick")
 
-newPage("buttons", "Botões")
-addSection("Botões na tela")
-addToggle("Botão MIRA", "ShowBtnAim", "")
-addToggle("Botão VOO", "ShowBtnFly", "")
-addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
-addToggle("Botão ESP", "ShowBtnEsp", "")
-addToggle("Botão FLING", "ShowBtnFling", "")
-addSection("Aparência")
-addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
-addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
-
+if isMobile then
+    newPage("buttons", "Botões")
+    addSection("Botões na tela")
+    addToggle("Botão MIRA", "ShowBtnAim", "")
+    addToggle("Botão VOO", "ShowBtnFly", "")
+    addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
+    addToggle("Botão ESP", "ShowBtnEsp", "")
+    addToggle("Botão FLING", "ShowBtnFling", "")
+    addSection("Aparência")
+    addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
+    addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
+end
 --------------------------------------------------------------------
 -- BOTÕES MOBILE
 --------------------------------------------------------------------
@@ -2738,7 +2739,9 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 			if Settings.TriggerBot then parts[#parts + 1] = "Trigger" end
-			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
+			if Settings.AimEnabled and (aimActive or Settings.AimMode == 3) then
+    parts[#parts + 1] = "🎯 MIRA"
+end
 			hud.Text = table.concat(parts, "  •  ")
 		end
 	end)
