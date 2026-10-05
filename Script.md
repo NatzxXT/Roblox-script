@@ -1,10 +1,10 @@
 --[[
-    TestToolkit v59.3 - LocalScript (100% cliente)
+    TestToolkit v59.4 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v59.3:
-      - Corrigido: ESP e Aimbot não pegam mais corpos mortos/caídos
-      - Seat Invisibility RESTAURADO ao original (invisível para outros players)
+    v59.4:
+      - Corrigido: ESP e Aimbot não pegam mais corpos caídos (verificação tripla)
+      - Seat Invisibility mantido no original (invisível para outros players)
 ]]
 
 local Players = game:GetService("Players")
@@ -60,7 +60,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v59.3 carregando...")
+bootShow("TestToolkit v59.4 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -107,7 +107,6 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
 
-	-- SEAT INVISIBILITY (ORIGINAL)
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
 	SeatInvisibleY = 84,
@@ -277,7 +276,7 @@ local function isTeammate(model, plr)
 end
 
 --------------------------------------------------------------------
--- TARGETS (CORRIGIDO PARA IGNORAR CORPOS MORTOS)
+-- TARGETS (VERIFICAÇÃO DE CORPO CAÍDO APRIMORADA)
 --------------------------------------------------------------------
 local humanoids = {}
 local rootOf = setmetatable({}, { __mode = "k" })
@@ -316,21 +315,55 @@ end
 local targetCache = {}
 local CACHE_TTL = 0.15
 
--- Função para verificar se o alvo está realmente vivo (não é um corpo caído)
+-- VERIFICAÇÃO AGRESSIVA: Retorna true apenas se o alvo estiver VIVO e EM PÉ
 local function isAlive(hum)
 	if not hum or hum.Health <= 0 then return false end
+	
+	-- 1. Verifica estado do Humanoid
 	local state = hum:GetState()
-	if state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Physics then
+	if state == Enum.HumanoidStateType.Dead 
+		or state == Enum.HumanoidStateType.Physics 
+		or state == Enum.HumanoidStateType.Ragdoll 
+		or state == Enum.HumanoidStateType.FallingDown then
 		return false
 	end
+	
+	-- 2. Verifica se a vida está muito baixa (corpos mortos no MM2 tem vida 1)
+	if hum.Health < 5 then return false end
+	
+	-- 3. Verifica se o corpo está deitado no chão
 	local root = hum.Parent:FindFirstChild("HumanoidRootPart")
 	if root then
-		local ray = Ray.new(root.Position, Vector3.new(0, -5, 0))
-		local hit = Workspace:FindPartOnRay(ray, hum.Parent)
-		if hit and hit:IsDescendantOf(hum.Parent) then
+		-- Pega a direção "para cima" do corpo
+		local upVector = root.CFrame.UpVector
+		local worldUp = Vector3.new(0, 1, 0)
+		local dot = upVector:Dot(worldUp)
+		
+		-- Se o corpo está deitado, o upVector fica perpendicular ao mundo (dot perto de 0)
+		-- Se está em pé, o dot é perto de 1
+		if dot < 0.5 then
+			return false  -- Corpo deitado/caído
+		end
+		
+		-- 4. Verifica se o corpo está no chão (não pulando/caindo)
+		-- Se estiver no ar e com velocidade vertical muito negativa, está caindo (morto)
+		if hum.FloorMaterial == Enum.Material.Air then
+			local vel = root.AssemblyLinearVelocity
+			if vel.Y < -50 then
+				return false  -- Caindo muito rápido = morto
+			end
+		end
+	end
+	
+	-- 5. Verifica se o Head está no lugar certo (corpos caídos tem Head baixo)
+	local head = hum.Parent:FindFirstChild("Head")
+	if head and root then
+		local heightDiff = head.Position.Y - root.Position.Y
+		if heightDiff < 0.5 then  -- Cabeça muito perto do root = deitado
 			return false
 		end
 	end
+	
 	return true
 end
 
@@ -1520,7 +1553,6 @@ do
 		local hrp = char:FindFirstChild("HumanoidRootPart")
 		if not hrp then return end
 
-		-- Limpa qualquer seat antigo antes de criar novo
 		cleanupSeat()
 
 		local savedPosition = hrp.CFrame
@@ -1559,9 +1591,7 @@ do
 	end
 
 	local function deactivate()
-		-- Destrói IMEDIATAMENTE o seat (não espera loop)
 		cleanupSeat()
-		-- Restaura transparency de todas as partes
 		if LocalPlayer.Character then
 			for _, descendant in ipairs(LocalPlayer.Character:GetDescendants()) do
 				if descendant:IsA("BasePart") or descendant:IsA("Decal") then
@@ -1596,7 +1626,6 @@ do
 		end
 	end
 
-	-- Loop de segurança: se o servidor apagar o seat por fora, desliga
 	task.spawn(function()
 		while task.wait(0.5) do
 			if active and (not mySeat or not mySeat.Parent) then
@@ -1608,7 +1637,6 @@ do
 		end
 	end)
 
-	-- Re-aplica transparency só enquanto ativo (não re-cria seat fantasma)
 	task.spawn(function()
 		while task.wait(0.3) do
 			if active then
@@ -2414,7 +2442,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v59.3"
+title.Text = "Test Toolkit v59.4"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -4042,8 +4070,7 @@ hud.Active = true
 local hudDrag, hudDragStart, hudDragFrom = false, nil, nil
 hud.InputBegan:Connect(function(input)
 	if Settings.HUDEdit and (input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch) then
-		hudDrag = true
+		or input.UserInputType == Enum.UserInputType.Touch) then		hudDrag = true
 		hudDragStart = input.Position
 		hudDragFrom = Vector2.new(Settings.HUDX, Settings.HUDY)
 	end
@@ -4155,7 +4182,7 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v59.3 carregado  •  "
+	bootShow("TestToolkit v59.4 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
