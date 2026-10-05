@@ -1,5 +1,5 @@
 --[[
-    TestToolkit v71 - UNIVERSAL (fix menu)
+    TestToolkit v72 - UNIVERSAL (fix completo)
     Ctrl direito abre/fecha
 ]]
 
@@ -118,7 +118,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v71 carregando...")
+bootShow("TestToolkit v72 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -617,7 +617,7 @@ local function switchTarget()
 	currentTarget = c[(idx % #c) + 1]
 end
 
-local function isAiming() return Settings.AimEnabled and (aimActive or Settings.AimMode == 3) end
+local function isAiming() return aimActive or Settings.AimMode == 3 end
 local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
 
@@ -1014,7 +1014,7 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------
--- FLY
+-- FLY (corrigido - sem inverter, sem voar lento ao desligar)
 --------------------------------------------------------------------
 local flyObjs = nil
 local flyPlat = false
@@ -1034,7 +1034,14 @@ local function destroyFly()
 	end
 	if flyPlat then
 		local hum = getLocalHumanoid()
-		if hum then hum.PlatformStand = false end
+		if hum then
+			hum.PlatformStand = false
+			local root = getLocalRoot()
+			if root then
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+			end
+		end
 		flyPlat = false
 	end
 end
@@ -1051,14 +1058,7 @@ local function ensureFly(root)
 	lv.MaxForce = math.huge
 	lv.VectorVelocity = Vector3.zero
 	lv.Parent = root
-	local ao = Instance.new("AlignOrientation")
-	ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
-	ao.Attachment0 = att
-	ao.RigidityEnabled = false
-	ao.MaxTorque = math.huge
-	ao.Responsiveness = 40
-	ao.Parent = root
-	flyObjs = { Att = att, LV = lv, AO = ao }
+	flyObjs = { Att = att, LV = lv }
 	return flyObjs
 end
 
@@ -1096,11 +1096,11 @@ local function updateFly(hum, root, dt)
 		flyCur = goal
 	end
 	f.LV.VectorVelocity = dir * flyCur
-	f.AO.CFrame = CFrame.lookAt(Vector3.zero, flatLook)
+	-- NÃO travar rotação (isso inverte os controles)
 end
 
 --------------------------------------------------------------------
--- FLING
+-- FLING (corrigido - BodyVelocity + tarefa separada)
 --------------------------------------------------------------------
 local Fling = {}
 do
@@ -1122,23 +1122,36 @@ do
 		local hum = targetRoot.Parent:FindFirstChildOfClass("Humanoid")
 		if hum and hum.Health <= 0 then return end
 		disableBotCollide(targetRoot.Parent)
-		local myPos = myRoot.Position
-		local tPos = targetRoot.Position
-		local dir = Vector3.new(tPos.X - myPos.X, 0, tPos.Z - myPos.Z)
-		if dir.Magnitude < 0.05 then dir = Vector3.new(0, 0, 1)
-		else dir = dir.Unit end
-		local linVel, angVel
-		if mode == 1 then
-			linVel = dir * power * 50 + Vector3.new(0, power * 10, 0)
-			angVel = Vector3.new(power * 50, power * 50, power * 50)
-		else
-			linVel = Vector3.new(9e7, 9e7, 9e7)
-			angVel = Vector3.new(9e8, 9e8, 9e8)
+
+		local bv = Instance.new("BodyVelocity")
+		bv.MaxForce = Vector3.one * math.huge
+		bv.P = math.huge
+		bv.Velocity = Vector3.new(0, 0, 0)
+		bv.Parent = targetRoot
+
+		local bav = Instance.new("BodyAngularVelocity")
+		bav.MaxTorque = Vector3.one * math.huge
+		bav.P = math.huge
+		bav.AngularVelocity = Vector3.new(30, 30, 30)
+		bav.Parent = targetRoot
+
+		local endTime = os.clock() + 0.5
+		while os.clock() < endTime do
+			if not targetRoot.Parent then break end
+			local myPos = myRoot.Position
+			local tPos = targetRoot.Position
+			local dir = Vector3.new(tPos.X - myPos.X, 0, tPos.Z - myPos.Z)
+			if dir.Magnitude < 0.05 then dir = Vector3.new(0, 0, 1)
+			else dir = dir.Unit end
+			if mode == 1 then
+				bv.Velocity = dir * power * 50 + Vector3.new(0, power * 10, 0)
+			else
+				bv.Velocity = Vector3.new(9e7, 9e7, 9e7)
+			end
+			RunService.Heartbeat:Wait()
 		end
-		pcall(function()
-			targetRoot.AssemblyLinearVelocity = linVel
-			targetRoot.AssemblyAngularVelocity = angVel
-		end)
+		if bv.Parent then bv:Destroy() end
+		if bav.Parent then bav:Destroy() end
 	end
 
 	local function doFlingPlayer(target)
@@ -1149,7 +1162,7 @@ do
 		local home = myRoot.CFrame
 		local spin = Instance.new("BodyAngularVelocity")
 		spin.MaxTorque = Vector3.one * math.huge
-		spin.AngularVelocity = Vector3.new(0, Settings.FlingPlayerSpin or 9e4, 0)
+		spin.AngularVelocity = myRoot.CFrame:VectorToWorldSpace(Vector3.new(0, 30, 0))
 		spin.Parent = myRoot
 		local savedNoclip = {}
 		local char = LocalPlayer.Character
@@ -1166,7 +1179,7 @@ do
 		while os.clock() - started < duration do
 			local currentTarget = getRoot(target.Character)
 			if not currentTarget or not myRoot.Parent then break end
-			myRoot.CFrame = currentTarget.CFrame
+			myRoot.CFrame = currentTarget.CFrame * CFrame.Angles(0, (os.clock() - started) * 30, 0)
 			myRoot.AssemblyLinearVelocity = Vector3.zero
 			RunService.Heartbeat:Wait()
 		end
@@ -1176,8 +1189,8 @@ do
 			myRoot.AssemblyLinearVelocity = Vector3.zero
 			myRoot.CFrame = home
 		end
-		for part, canCollide in pairs(savedNoclip) do
-			if part.Parent then part.CanCollide = canCollide end
+		for part, cc in pairs(savedNoclip) do
+			if part.Parent then part.CanCollide = cc end
 		end
 		return true
 	end
@@ -1214,19 +1227,21 @@ do
 		lastFling = now
 		local myHum, myRoot = getLocalHumanoid(), getLocalRoot()
 		if not myHum or myHum.Health <= 0 then return end
-		local myPos = myRoot.Position
-		local range = Settings.FlingRange
-		for model, hum in pairs(humanoids) do
-			if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
-				local plr = Players:GetPlayerFromCharacter(model)
-				if not plr then
-					local r = getRoot(model)
-					if r and (r.Position - myPos).Magnitude <= range then
-						doFling(r, myRoot, Settings.FlingPower, Settings.FlingMode2 or 2)
+		task.spawn(function()
+			local myPos = myRoot.Position
+			local range = Settings.FlingRange
+			for model, hum in pairs(humanoids) do
+				if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
+					local plr = Players:GetPlayerFromCharacter(model)
+					if not plr then
+						local r = getRoot(model)
+						if r and (r.Position - myPos).Magnitude <= range then
+							doFling(r, myRoot, Settings.FlingPower, Settings.FlingMode2 or 2)
+						end
 					end
 				end
 			end
-		end
+		end)
 	end
 end
 
@@ -1950,14 +1965,14 @@ end
 RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Value + 2, function(dt)
 	pcall(function()
 		local aimOrigin = getAimOrigin()
-		local showFov = Settings.FOVEnabled and Settings.AimEnabled and isLegit()
+		local showFov = Settings.FOVEnabled and isLegit() and isAiming()
 		fovCircle.Visible = showFov
 		if showFov then
 			fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 			local d = Settings.FOVRadius * 2
 			fovCircle.Size = UDim2.fromOffset(d, d)
 		end
-		local showSilent = Settings.AimEnabled and isSilent()
+		local showSilent = isSilent() and isAiming()
 		silentFovCircle.Visible = showSilent
 		if showSilent then
 			silentFovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
@@ -1987,7 +2002,7 @@ end)
 --------------------------------------------------------------------
 local menuOpen = false
 local refreshers = {}
-local uiRefresh
+local uiRefresh = function() end
 
 local function buildUI()
 
@@ -2038,7 +2053,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v71"
+title.Text = "Test Toolkit v72"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2543,12 +2558,15 @@ local function addDropdown(text, key, desc, onChange)
 		local list = getList()
 		local h = math.min(#list * 28, 240)
 		dropdownFrame = Instance.new("Frame")
-		dropdownFrame.Size = UDim2.new(1, -24, 0, h)
-		dropdownFrame.Position = UDim2.new(0, 12, 1, 4)
+		dropdownFrame.Position = UDim2.fromOffset(
+			row.AbsolutePosition.X + 12,
+			row.AbsolutePosition.Y + row.AbsoluteSize.Y + 4
+		)
+		dropdownFrame.Size = UDim2.new(0, row.AbsoluteSize.X - 24, 0, h)
 		dropdownFrame.BackgroundColor3 = Theme.Bg
 		dropdownFrame.BorderSizePixel = 0
-		dropdownFrame.ZIndex = 100
-		dropdownFrame.Parent = row
+		dropdownFrame.ZIndex = 500
+		dropdownFrame.Parent = gui
 		corner(dropdownFrame, 8)
 		stroke(dropdownFrame, Theme.Accent, 0.5, 1)
 		local scroll = Instance.new("ScrollingFrame")
@@ -2780,8 +2798,7 @@ makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil, function() return menuOpen 
 	if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
 end)
 makeMobileBtn("MIRA", UDim2.fromScale(0.9, 0.42), "ShowBtnAim", function() return aimActive end, function()
-	if Settings.AimMode == 1 then aimActive = true
-	else aimActive = not aimActive end
+	aimActive = true
 end, function()
 	if Settings.AimMode == 1 then aimActive = false end
 end)
@@ -2852,7 +2869,7 @@ closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
 
 refreshAll()
 
--- KEYBIND (dentro do buildUI, único lugar onde MENU_KEY é tratado)
+-- KEYBIND
 UserInputService.InputBegan:Connect(function(input)
 	if rebinding then
 		local r = rebinding
@@ -2951,17 +2968,17 @@ if okUI then
 		end)
 	end)
 
-	bootShow("TestToolkit v71 carregado  •  "
+	bootShow("TestToolkit v72 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v71 carregado com sucesso!")
+	print("[TestToolkit] v72 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
 end
 
 --------------------------------------------------------------------
--- TECLAS (fora do buildUI, só as teclas de jogo)
+-- TECLAS DE JOGO
 --------------------------------------------------------------------
 local function matchesBind(input, bind)
 	if typeof(bind) ~= "EnumItem" then return false end
@@ -2974,10 +2991,9 @@ UserInputService.InputBegan:Connect(function(input)
 	if rebinding then return end
 
 	if matchesBind(input, Settings.AimKey) then
-		if Settings.AimMode == 1 then aimActive = true
-		elseif Settings.AimMode == 2 then
-			aimActive = not aimActive
-			notify(aimActive and "Mira ativada" or "Mira desativada", aimActive and "on" or "off")
+		aimActive = true
+		if Settings.AimMode == 2 then
+			notify("Mira ativada", "on")
 		end
 	elseif matchesBind(input, Settings.SwitchKey) then
 		if isAiming() then switchTarget() end
