@@ -1,9 +1,8 @@
 --[[
-    TestToolkit v79
-    Ctrl direito abre/fecha | Q alterna mira
-    Aim via mousemoverel (Delta/Xeno universal)
-    Trigger instantâneo com detecção robusta
-    Wall Check funcional em aim, silent e trigger
+    TestToolkit v80
+    - Wall check usando câmera como origem (corrige aim through walls)
+    - Silent Aim via flick instantâneo (funciona em jogos com mousemoverel)
+    - FOV do Silent destacado em verde ciano
 ]]
 
 local Players = game:GetService("Players")
@@ -115,7 +114,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v79 carregando...")
+bootShow("TestToolkit v80 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -226,7 +225,7 @@ _G.TT_getRoot = getRoot
 _G.TT_humanoids = humanoids
 
 --------------------------------------------------------------------
--- WALL CHECK v79 (melhorado)
+-- WALL CHECK v80 (câmera como origem)
 --------------------------------------------------------------------
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -234,10 +233,8 @@ rayParams.IgnoreWater = true
 local filterList = {}
 
 local function isIgnorableBlocker(hit)
-	if hit.Transparency >= 0.9 then return true end
+	if hit.Transparency >= 0.95 and not hit.CanCollide then return true end
 	if hit:FindFirstAncestorOfClass("Accessory") then return true end
-	if hit:FindFirstAncestorOfClass("Tool") then return true end
-	if hit.CanCollide == false and hit.Transparency > 0.5 then return true end
 	return false
 end
 
@@ -246,24 +243,16 @@ local function hasLineOfSight(part, model)
 	if not part or not part.Parent then return false end
 	if not LocalPlayer.Character then return false end
 
+	local origin = Camera.CFrame.Position
+
 	table.clear(filterList)
 	filterList[1] = LocalPlayer.Character
 	filterList[2] = Camera
 	rayParams.FilterDescendantsInstances = filterList
 
-	-- Origem: cabeça do jogador (mais preciso que câmera)
-	local origin
-	local myHead = LocalPlayer.Character:FindFirstChild("Head")
-	if myHead and myHead:IsA("BasePart") then
-		origin = myHead.Position
-	else
-		origin = Camera.CFrame.Position
-	end
-
 	local dir = part.Position - origin
 
-	-- Até 6 raycasts
-	for _ = 1, 6 do
+	for _ = 1, 8 do
 		local result = Workspace:Raycast(origin, dir, rayParams)
 		if not result then return true end
 		local hit = result.Instance
@@ -347,9 +336,10 @@ stroke(fovCircle, Color3.new(1, 1, 1), 0.15, 1.5)
 local silentFovCircle = Instance.new("Frame")
 silentFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 silentFovCircle.BackgroundTransparency = 1
+silentFovCircle.ZIndex = 10
 silentFovCircle.Parent = gui
 corner(silentFovCircle, 9999)
-stroke(silentFovCircle, Color3.fromRGB(255, 100, 255), 0.3, 1.5)
+stroke(silentFovCircle, Color3.fromRGB(80, 255, 200), 0, 2)
 
 local triggerFovCircle = Instance.new("Frame")
 triggerFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -517,31 +507,59 @@ local function isAiming() return Settings.AimEnabled and (aimActive or Settings.
 local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
 
--- SILENT AIM hook
-local silentHooked = false
-local function installSilentHook()
-	if silentHooked then return end
-	if not hookfunction then return end
+--------------------------------------------------------------------
+-- SILENT AIM v80 - FLICK INSTANTÂNEO
+--------------------------------------------------------------------
+local mousemoverelFn = nil
+if type(mousemoverel) == "function" then
+	mousemoverelFn = mousemoverel
+end
+
+local flickInProgress = false
+
+local function performSilentFlick(targetPart)
+	if not targetPart or not targetPart.Parent then return false end
+	if not mousemoverelFn then return false end
+	if flickInProgress then return false end
+	flickInProgress = true
+
+	local vp = Camera.ViewportSize
+	local cx, cy = vp.X / 2, vp.Y / 2
+
+	local sp, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+	if not onScreen then
+		flickInProgress = false
+		return false
+	end
+
+	local dx = sp.X - cx
+	local dy = sp.Y - cy
+
+	-- Move mouse direto pro alvo
+	pcall(mousemoverelFn, dx, dy)
+	task.wait()
+
+	-- Atira
 	pcall(function()
-		local original = Camera.WorldToViewportPoint
-		Camera.WorldToViewportPoint = function(self, pos)
-			if silentActive and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
-				if typeof(pos) == "Vector3" then
-					local d = (pos - silentTarget.Part.Position).Magnitude
-					if d < 2 then
-						return original(self, silentTarget.Part.Position)
-					end
-				end
+		local mouse = LocalPlayer:GetMouse()
+		if mouse then
+			if mouse1click then mouse1click() end
+			if mouse1down and mouse1up then
+				mouse1down()
+				task.wait(0.01)
+				mouse1up()
 			end
-			return original(self, pos)
 		end
 	end)
-	silentHooked = true
+
+	task.wait()
+
+	-- Volta mouse
+	pcall(mousemoverelFn, -dx, -dy)
+
+	flickInProgress = false
+	return true
 end
-task.spawn(function()
-	task.wait(1)
-	pcall(installSilentHook)
-end)
 
 local function updateSilentTarget()
 	if not isSilent() or not isAiming() then
@@ -553,33 +571,45 @@ local function updateSilentTarget()
 	local camPos = Camera.CFrame.Position
 	local maxDist = Settings.SilentAimFOV
 	local best, bestD = nil, math.huge
+	local needWall = Settings.SilentAimVisible
+
 	for _, t in ipairs(getTargets("aim")) do
-		local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
-		if on then
-			local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-			local wd = (t.Root.Position - camPos).Magnitude
-			if d <= maxDist then
-				if not Settings.SilentAimVisible or hasLineOfSight(t.Root, t.Model) then
-					if wd < bestD then best, bestD = t, wd end
+		local part = getBestPart(t.Model)
+		if part then
+			local rsp, on = Camera:WorldToViewportPoint(part.Position)
+			if on and rsp.Z > 0 then
+				local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
+				if d <= maxDist then
+					if not needWall or hasLineOfSight(part, t.Model) then
+						local wd = (part.Position - camPos).Magnitude
+						if wd < bestD then
+							best, bestD = t, wd
+							best.Part = part
+						end
+					end
 				end
 			end
 		end
 	end
-	if best and best.Model.Parent then
-		local part = getBestPart(best.Model)
-		if part then
-			best.Part = part
-			silentTarget = best
-			silentActive = true
-			return
+
+	if best and best.Model.Parent and best.Part then
+		silentTarget = best
+		silentActive = true
+
+		if firing then
+			task.spawn(function()
+				performSilentFlick(best.Part)
+			end)
 		end
+		return
 	end
+
 	silentTarget = nil
 	silentActive = false
 end
 
 --------------------------------------------------------------------
--- TRIGGER BOT v79 (com wall check correto)
+-- TRIGGER BOT v80
 --------------------------------------------------------------------
 local triggerBotActive = false
 local lastTriggerShot = 0
@@ -667,13 +697,8 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- LEGIT AIM v79 (com wall check na seleção)
+-- LEGIT AIM v80
 --------------------------------------------------------------------
-local mousemoverelFn = nil
-if type(mousemoverel) == "function" then
-	mousemoverelFn = mousemoverel
-end
-
 RunService.RenderStepped:Connect(function(dt)
 	if not (isLegit() and isAiming()) then
 		aimDebugFound = 0
@@ -700,7 +725,6 @@ RunService.RenderStepped:Connect(function(dt)
 		fovCircle.Visible = false
 	end
 
-	-- Achar melhor alvo (com wall check)
 	local fovLimit = Settings.FOVEnabled and Settings.FOVRadius or math.huge
 	local best, bestDist = nil, fovLimit
 	local found = 0
@@ -777,7 +801,7 @@ RunService.RenderStepped:Connect(function(dt)
 	aimDebugMoved = moved
 end)
 
--- FOV circles de silent e trigger
+-- FOV circles
 RunService.RenderStepped:Connect(function()
 	local showSilentFov = Settings.AimEnabled and Settings.UseSilentAim and isAiming()
 	silentFovCircle.Visible = showSilentFov
@@ -785,6 +809,7 @@ RunService.RenderStepped:Connect(function()
 		local o = getAimOrigin()
 		silentFovCircle.Position = UDim2.fromOffset(o.X, o.Y)
 		silentFovCircle.Size = UDim2.fromOffset(Settings.SilentAimFOV * 2, Settings.SilentAimFOV * 2)
+		silentFovCircle.ZIndex = 10
 	end
 	local showTriggerFov = Settings.TriggerBot
 	triggerFovCircle.Visible = showTriggerFov
@@ -1686,7 +1711,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v79"
+title.Text = "Test Toolkit v80"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2283,7 +2308,7 @@ newPage("aim", "Mira")
 addSection("Modo de mira")
 addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
 addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente")
-addToggle("Silent Aim", "UseSilentAim", "Redireciona o tiro")
+addToggle("Silent Aim", "UseSilentAim", "Flick instantâneo no alvo")
 addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" }, "Como ativa", function() aimActive = false end)
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addToggle("Ignorar equipe", "TeamCheck", "Não mira aliados")
@@ -2546,9 +2571,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v79 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v80 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v79 carregado com sucesso!")
+	print("[TestToolkit] v80 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2602,7 +2627,7 @@ end)
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
 hud.Position = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
-hud.Size = UDim2.fromOffset(900, 20)
+hud.Size = UDim2.fromOffset(1000, 20)
 hud.BackgroundColor3 = Theme.Bg
 hud.BackgroundTransparency = 0.25
 hud.BorderSizePixel = 0
