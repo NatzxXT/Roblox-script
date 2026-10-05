@@ -1,7 +1,8 @@
-
 --[[
-    TestToolkit v91
-    - Fling Bots CORRIGIDO (player teleportado pra fora → não é arremessado)
+    TestToolkit v93
+    - Mouse livre ao abrir o menu (funciona em jogos que travam o mouse)
+    - Modo Furtivo (bypass anti-cheat de The Rake e similares)
+    - Fling Bots corrigido (player teleportado pra fora)
     - Fling Player Safe + K1LAS1K
     - Botão PARAR FLING
     - Touch Fling corrigido
@@ -56,6 +57,10 @@ local Settings = {
 
 	WalkSpeedOn = false, WalkSpeed = 32,
 	JumpOn = false, JumpPower = 100,
+
+	StealthMode = false,
+	StealthSpeed = 28,
+
 	Noclip = false, NoclipKey = Enum.KeyCode.N,
 	Fly = false, FlyKey = Enum.KeyCode.F, FlySpeed = 60,
 	AntiVoid = false,
@@ -124,7 +129,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v91 carregando...")
+bootShow("TestToolkit v93 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1087,7 +1092,6 @@ do
 	Fling.flingBV = nil
 	Fling.flingOldFPDH = nil
 
-	-- STOP FLING
 	Fling.stopFling = function()
 		Fling.flingActive = false
 		FlingActive = false
@@ -1130,7 +1134,6 @@ do
 		notify("Fling parado", "info")
 	end
 
-	-- FPos
 	local function FPos(BasePart, Pos, Ang, RootPart, Character, myRoot)
 		RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
 		Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
@@ -1138,7 +1141,6 @@ do
 		myRoot.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
 	end
 
-	-- Loop K1LAS1K
 	local function SFBasePart(BasePart, myRoot, myCharacter, myHumanoid)
 		local TimeToWait = 2
 		local Time = tick()
@@ -1183,7 +1185,6 @@ do
 		until Time + TimeToWait < tick()
 	end
 
-	-- FLING BOT: só o bot voa (player teleportado pra fora)
 	local function doFlingBot(targetModel)
 		if not targetModel or not targetModel.Parent then return false end
 		local hum = targetModel:FindFirstChildOfClass("Humanoid")
@@ -1195,7 +1196,6 @@ do
 		local myRoot = getLocalRoot()
 		if not myChar or not myRoot or not myRoot.Parent then return false end
 
-		-- Direção: pra longe de você
 		local dir = hrp.Position - myRoot.Position
 		if dir.Magnitude < 0.5 then
 			dir = -myRoot.CFrame.LookVector
@@ -1207,12 +1207,10 @@ do
 		end
 		flatDir = flatDir.Unit
 
-		-- ============ FIX PRINCIPAL ============
 		local savedCF = myRoot.CFrame
 		local savedVel = myRoot.AssemblyLinearVelocity
 		local savedAngVel = myRoot.AssemblyAngularVelocity
 
-		-- Teleporta o player pra fora do caminho
 		local safePos = myRoot.Position + Vector3.new(-flatDir.X * 15, 8, -flatDir.Z * 15)
 		pcall(function()
 			myRoot.CFrame = CFrame.new(safePos)
@@ -1220,7 +1218,6 @@ do
 			myRoot.AssemblyAngularVelocity = Vector3.zero
 		end)
 
-		-- Salva e desabilita colisão do bot
 		local savedCol = {}
 		for _, part in ipairs(targetModel:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -1279,7 +1276,6 @@ do
 
 	Fling.doFlingBot = doFlingBot
 
-	-- FLING PLAYER (K1LAS1K)
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1362,7 +1358,6 @@ do
 
 	Fling.doFlingPlayer = doFlingPlayer
 
-	-- FLING PLAYER SAFE
 	Fling.doFlingPlayerSafe = function(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1713,11 +1708,25 @@ RunService.Heartbeat:Connect(function(dt)
 		local root = getLocalRoot()
 
 		if Settings.WalkSpeedOn then
-			if not wsActive then
-				defaultWalkSpeed = hum.WalkSpeed
-				wsActive = true
+			if Settings.StealthMode then
+				if hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
+				if root then
+					local moveDir = hum.MoveDirection
+					if moveDir.Magnitude > 0.1 then
+						root.AssemblyLinearVelocity = Vector3.new(
+							moveDir.X * Settings.StealthSpeed,
+							root.AssemblyLinearVelocity.Y,
+							moveDir.Z * Settings.StealthSpeed
+						)
+					end
+				end
+			else
+				if not wsActive then
+					defaultWalkSpeed = hum.WalkSpeed
+					wsActive = true
+				end
+				if hum.WalkSpeed ~= Settings.WalkSpeed then hum.WalkSpeed = Settings.WalkSpeed end
 			end
-			if hum.WalkSpeed ~= Settings.WalkSpeed then hum.WalkSpeed = Settings.WalkSpeed end
 		elseif wsActive then
 			hum.WalkSpeed = defaultWalkSpeed
 			wsActive = false
@@ -2128,6 +2137,8 @@ end
 local menuOpen = false
 local refreshers = {}
 local uiRefresh = function() end
+local savedMouseBehavior = nil
+local savedMouseIcon = nil
 
 local function buildUI()
 
@@ -2178,7 +2189,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v91"
+title.Text = "Test Toolkit v93"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2833,6 +2844,8 @@ newPage("player", "Jogador")
 addSection("Movimento")
 addToggle("Velocidade", "WalkSpeedOn", "Muda WalkSpeed")
 addSlider("Valor da velocidade", "WalkSpeed", 16, 5000, 5, 0, "Padrão 16")
+addToggle("Modo Furtivo", "StealthMode", "Bypass anti-cheat (The Rake, etc)")
+addSlider("Vel. Furtiva", "StealthSpeed", 18, 60, 1, 0, "Recomendado: 24-32")
 addToggle("Pulo", "JumpOn", "Muda JumpPower")
 addSlider("Valor do pulo", "JumpPower", 50, 900, 5, 0, "Padrão 50")
 addToggle("Pulo infinito", "InfJump", "Pula no ar")
@@ -3068,16 +3081,50 @@ local function setMenu(open)
 		menuScale.Scale = s * 0.94
 		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
 		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
+
+		-- Destrava o mouse
+		pcall(function()
+			savedMouseBehavior = UserInputService.MouseBehavior
+			savedMouseIcon = UserInputService.MouseIconEnabled
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			UserInputService.MouseIconEnabled = true
+		end)
 	else
 		tween(menu, { GroupTransparency = 1 }, 0.16)
 		tween(menuScale, { Scale = s * 0.94 }, 0.16)
 		task.delay(0.18, function()
 			if not menuOpen then menu.Visible = false end
 		end)
+
+		-- Restaura o estado do mouse
+		pcall(function()
+			if savedMouseBehavior then
+				UserInputService.MouseBehavior = savedMouseBehavior
+			end
+			if savedMouseIcon ~= nil then
+				UserInputService.MouseIconEnabled = savedMouseIcon
+			end
+			savedMouseBehavior = nil
+			savedMouseIcon = nil
+		end)
 	end
 end
 _G.TT_setMenu = setMenu
 _G.TT_isMenuOpen = function() return menuOpen end
+
+-- FORÇA mouse livre a cada frame enquanto o menu está aberto
+RunService.RenderStepped:Connect(function()
+	if menuOpen then
+		pcall(function()
+			if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+			if not UserInputService.MouseIconEnabled then
+				UserInputService.MouseIconEnabled = true
+			end
+		end)
+	end
+end)
 
 closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
 
@@ -3111,9 +3158,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v91 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v93 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v91 carregado com sucesso!")
+	print("[TestToolkit] v93 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -3211,6 +3258,7 @@ RunService.RenderStepped:Connect(function(dt)
 			}
 			if Settings.Fly then parts[#parts + 1] = "Voo" end
 			if Settings.Noclip then parts[#parts + 1] = "Noclip" end
+			if Settings.StealthMode and Settings.WalkSpeedOn then parts[#parts + 1] = "🥷 Furtivo" end
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
