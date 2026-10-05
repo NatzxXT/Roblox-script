@@ -1,8 +1,11 @@
 --[[
-    TestToolkit v80
-    - Wall check usando câmera como origem (corrige aim through walls)
-    - Silent Aim via flick instantâneo (funciona em jogos com mousemoverel)
-    - FOV do Silent destacado em verde ciano
+    TestToolkit v82
+    - Wall check usando câmera como origem
+    - Silent Aim via flick instantâneo
+    - ESP somente Highlight (sem caixa bugada)
+    - Touch Fling (arremessa quem chega perto)
+    - Fling Player via Touch
+    - Spectate Player
 ]]
 
 local Players = game:GetService("Players")
@@ -29,7 +32,7 @@ local Settings = {
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
 	Wallhack = true, ESPMaxDist = 600, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
-	ESPBox = 2, Tracers = false, TracerOrigin = 1,
+	ESPBox = 1, Tracers = false, TracerOrigin = 1,
 
 	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
@@ -68,6 +71,13 @@ local Settings = {
 	FlingPlayerTarget = "Nenhum",
 	FlingPlayerDuration = 2.5,
 	FlingPlayerKey = Enum.KeyCode.B,
+
+	-- Touch Fling
+	TouchFling = false, TouchFlingKey = Enum.KeyCode.T,
+	TouchFlingRange = 8,
+
+	-- Spectate
+	Spectating = false, SpectateTarget = "Nenhum",
 
 	MENU_KEY = Enum.KeyCode.RightControl,
 
@@ -114,7 +124,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v80 carregando...")
+bootShow("TestToolkit v82 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -225,7 +235,7 @@ _G.TT_getRoot = getRoot
 _G.TT_humanoids = humanoids
 
 --------------------------------------------------------------------
--- WALL CHECK v80 (câmera como origem)
+-- WALL CHECK
 --------------------------------------------------------------------
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -508,7 +518,7 @@ local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
 
 --------------------------------------------------------------------
--- SILENT AIM v80 - FLICK INSTANTÂNEO
+-- SILENT AIM - FLICK INSTANTÂNEO
 --------------------------------------------------------------------
 local mousemoverelFn = nil
 if type(mousemoverel) == "function" then
@@ -535,11 +545,9 @@ local function performSilentFlick(targetPart)
 	local dx = sp.X - cx
 	local dy = sp.Y - cy
 
-	-- Move mouse direto pro alvo
 	pcall(mousemoverelFn, dx, dy)
 	task.wait()
 
-	-- Atira
 	pcall(function()
 		local mouse = LocalPlayer:GetMouse()
 		if mouse then
@@ -554,7 +562,6 @@ local function performSilentFlick(targetPart)
 
 	task.wait()
 
-	-- Volta mouse
 	pcall(mousemoverelFn, -dx, -dy)
 
 	flickInProgress = false
@@ -609,7 +616,7 @@ local function updateSilentTarget()
 end
 
 --------------------------------------------------------------------
--- TRIGGER BOT v80
+-- TRIGGER BOT
 --------------------------------------------------------------------
 local triggerBotActive = false
 local lastTriggerShot = 0
@@ -697,7 +704,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- LEGIT AIM v80
+-- LEGIT AIM
 --------------------------------------------------------------------
 RunService.RenderStepped:Connect(function(dt)
 	if not (isLegit() and isAiming()) then
@@ -1190,7 +1197,170 @@ do
 end
 
 --------------------------------------------------------------------
--- HEARTBEAT (movimento)
+-- TOUCH FLING (arremessa qualquer player que chegar perto)
+--------------------------------------------------------------------
+local TouchFling = {}
+do
+	local cooldown = {}
+
+	local function canFling(model)
+		if not model or not model.Parent then return false end
+		if not model:IsA("Model") then return false end
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then return false end
+		if model == LocalPlayer.Character then return false end
+		return true
+	end
+
+	local function flingTarget(targetRoot, myRoot)
+		if not targetRoot or not targetRoot.Parent then return false end
+		if not myRoot or not myRoot.Parent then return false end
+
+		local hum = targetRoot.Parent:FindFirstChildOfClass("Humanoid")
+		if hum and hum.Health <= 0 then return false end
+
+		local now = os.clock()
+		if cooldown[targetRoot] and now - cooldown[targetRoot] < 0.5 then
+			return false
+		end
+		cooldown[targetRoot] = now
+
+		local savedPos = myRoot.CFrame
+		local savedVel = myRoot.AssemblyLinearVelocity
+		local savedAng = myRoot.AssemblyAngularVelocity
+
+		myRoot.CFrame = targetRoot.CFrame
+
+		local bv = Instance.new("BodyVelocity")
+		bv.MaxForce = Vector3.one * math.huge
+		bv.P = math.huge
+		bv.Velocity = Vector3.new(9e7, 9e7, 9e7)
+		bv.Parent = targetRoot
+
+		local bav = Instance.new("BodyAngularVelocity")
+		bav.MaxTorque = Vector3.one * math.huge
+		bav.P = math.huge
+		bav.AngularVelocity = Vector3.new(60, 60, 60)
+		bav.Parent = targetRoot
+
+		task.wait(0.15)
+
+		if bv.Parent then bv:Destroy() end
+		if bav.Parent then bav:Destroy() end
+
+		if myRoot.Parent then
+			myRoot.CFrame = savedPos
+			myRoot.AssemblyLinearVelocity = savedVel
+			myRoot.AssemblyAngularVelocity = savedAng
+		end
+		return true
+	end
+
+	TouchFling.step = function()
+		if not Settings.TouchFling then return end
+		local myRoot = getLocalRoot()
+		if not myRoot or not myRoot.Parent then return end
+
+		local myPos = myRoot.Position
+		local range = Settings.TouchFlingRange
+
+		for model, hum in pairs(humanoids) do
+			if canFling(model) and hum.Health > 0 then
+				local theirRoot = getRoot(model)
+				if theirRoot and theirRoot.Parent then
+					local dist = (theirRoot.Position - myPos).Magnitude
+					if dist <= range then
+						flingTarget(theirRoot, myRoot)
+					end
+				end
+			end
+		end
+	end
+
+	TouchFling.flingModel = function(model)
+		local myRoot = getLocalRoot()
+		if not myRoot then return end
+		local theirRoot = getRoot(model)
+		if not theirRoot then return end
+		flingTarget(theirRoot, myRoot)
+	end
+end
+
+_G.TT_TouchFling = TouchFling
+
+--------------------------------------------------------------------
+-- SPECTATE PLAYER
+--------------------------------------------------------------------
+local Spectate = {}
+do
+	local originalSubject = nil
+	local originalType = nil
+	local currentTarget = nil
+	local savedState = false
+
+	Spectate.start = function(plr)
+		if not plr or plr == LocalPlayer then return false end
+
+		if not savedState then
+			originalSubject = Camera.CameraSubject
+			originalType = Camera.CameraType
+			savedState = true
+		end
+
+		local char = plr.Character
+		if not char then return false end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum then return false end
+
+		Camera.CameraType = Enum.CameraType.Custom
+		Camera.CameraSubject = hum
+		currentTarget = plr
+		Settings.Spectating = true
+		Settings.SpectateTarget = plr.DisplayName or plr.Name
+		return true
+	end
+
+	Spectate.stop = function()
+		if not savedState then return end
+		Camera.CameraType = originalType or Enum.CameraType.Custom
+		Camera.CameraSubject = originalSubject
+		currentTarget = nil
+		savedState = false
+		Settings.Spectating = false
+		Settings.SpectateTarget = "Nenhum"
+	end
+
+	Spectate.isActive = function()
+		return currentTarget ~= nil and currentTarget.Character ~= nil
+	end
+
+	Spectate.getTarget = function()
+		return currentTarget
+	end
+
+	task.spawn(function()
+		while task.wait(0.5) do
+			if Settings.Spectating and currentTarget then
+				local char = currentTarget.Character
+				if not char then
+					Spectate.stop()
+					if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+				else
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if not hum or hum.Health <= 0 then
+						Spectate.stop()
+						if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+					end
+				end
+			end
+		end
+	end)
+end
+
+_G.TT_Spectate = Spectate
+
+--------------------------------------------------------------------
+-- HEARTBEAT (movimento + touchfling)
 --------------------------------------------------------------------
 local defaultWalkSpeed = 16
 local defaultJumpPower, defaultUseJumpPower = 50, true
@@ -1244,6 +1414,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		Fling.step()
+		TouchFling.step()
 	end)
 end)
 
@@ -1318,7 +1489,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- ESP
+-- ESP (somente Highlight + nome + hp + tracer)
 --------------------------------------------------------------------
 local espRoot = Instance.new("Frame")
 espRoot.Name = "ESP"
@@ -1374,11 +1545,6 @@ local function newEsp(model)
 	holder.Parent = espRoot
 	o.Holder = holder
 
-	o.Box = mkFrame(holder)
-	o.Box.BackgroundTransparency = 1
-	o.BoxStroke = stroke(o.Box, Color3.new(1, 1, 1), 0, 1.5)
-	o.Corners = {}
-	for i = 1, 8 do o.Corners[i] = mkFrame(holder) end
 	o.HpBg = mkFrame(holder)
 	o.HpBg.BackgroundColor3 = Color3.new(0, 0, 0)
 	o.HpBg.BackgroundTransparency = 0.4
@@ -1440,44 +1606,15 @@ local function drawEsp(o, t, dist, now, vp)
 	local top = Camera:WorldToViewportPoint(rootPos + Vector3.new(0, h * 0.45, 0))
 	local bot = Camera:WorldToViewportPoint(rootPos - Vector3.new(0, h * 0.55, 0))
 	local boxH = math.max(bot.Y - top.Y, 10)
-	local boxW = boxH * 0.55
-	local x, y = px(center.X - boxW / 2), px(top.Y)
-	boxW, boxH = px(boxW), px(boxH)
+	local x, y = px(center.X), px(top.Y)
 
 	o.Holder.Visible = true
-
-	local boxMode = Settings.ESPBox
-	o.Box.Visible = boxMode == 2
-	if boxMode == 2 then
-		o.Box.Position = UDim2.fromOffset(x, y)
-		o.Box.Size = UDim2.fromOffset(boxW, boxH)
-		o.BoxStroke.Color = color
-	end
-	if boxMode == 3 then
-		local L, th = math.max(4, px(boxW * 0.28)), 2
-		local r, b = x + boxW, y + boxH
-		local specs = {
-			{ x, y, L, th }, { x, y, th, L },
-			{ r - L, y, L, th }, { r - th, y, th, L },
-			{ x, b - th, L, th }, { x, b - L, th, L },
-			{ r - L, b - th, L, th }, { r - th, b - L, th, L },
-		}
-		for i = 1, 8 do
-			local f, s = o.Corners[i], specs[i]
-			f.BackgroundColor3 = color
-			f.Position = UDim2.fromOffset(s[1], s[2])
-			f.Size = UDim2.fromOffset(s[3], s[4])
-			f.Visible = true
-		end
-	else
-		for i = 1, 8 do o.Corners[i].Visible = false end
-	end
 
 	if Settings.ShowHealth then
 		local hum = t.Humanoid
 		local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
 		o.HpBg.Visible = true
-		o.HpBg.Position = UDim2.fromOffset(x - 7, y)
+		o.HpBg.Position = UDim2.fromOffset(x + 10, y)
 		o.HpBg.Size = UDim2.fromOffset(4, boxH)
 		o.HpFill.Size = UDim2.new(1, 0, frac, 0)
 		o.HpFill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.9, 1)
@@ -1491,7 +1628,7 @@ local function drawEsp(o, t, dist, now, vp)
 		local displayName = (plr and plr.DisplayName) or model.Name or "?"
 		o.Name.Text = tostring(displayName) .. "  [" .. tostring(math.floor(dist or 0)) .. "m]"
 		o.Name.TextColor3 = color
-		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
+		o.Name.Position = UDim2.fromOffset(x, y - 2)
 	else
 		o.Name.Visible = false
 	end
@@ -1711,7 +1848,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v80"
+title.Text = "Test Toolkit v82"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2350,7 +2487,6 @@ addToggle("ESP", "ESP", "Mostra alvos")
 addToggle("Ver através de paredes", "Wallhack", "Contorno atrás de objetos")
 addToggle("Contorno colorido", "ESPHighlight", "Mais pesado")
 addToggle("Cor arco-íris", "Rainbow", "Cor animada")
-addCycle("Caixa", "ESPBox", { "Desligada", "Completa", "Cantos" }, "Moldura")
 addToggle("Nomes e distância", "ShowNames", "Texto acima")
 addToggle("Barra de vida", "ShowHealth", "Barra verde/vermelha")
 addToggle("Linhas", "Tracers", "Linha da tela")
@@ -2401,10 +2537,50 @@ addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
 addInfo("Escolha o player e clique em Fling Player.", 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
-addButton("Fling Player", "Arremessa o player selecionado (ou tecla B)", function()
+addButton("Fling Player (clássico)", "Arremessa o player selecionado (ou tecla B)", function()
 	Fling.flingSelected()
 end)
+addButton("Fling Player (Touch)", "Arremessa o player selecionado pelo método Touch", function()
+	local name = Settings.FlingPlayerTarget
+	if not name or name == "Nenhum" then
+		notify("Fling: selecione um player", "off")
+		return
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if (plr.DisplayName == name or plr.Name == name) and plr ~= LocalPlayer then
+			task.spawn(function()
+				TouchFling.flingModel(plr.Character)
+				notify("Fling Touch: " .. plr.DisplayName, "on")
+			end)
+			return
+		end
+	end
+end)
 addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 10, 0.5, 1, "Tempo preso")
+addSection("Touch Fling")
+addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto de você")
+addSlider("Alcance do Touch", "TouchFlingRange", 3, 30, 1, 0, "Studs")
+addKeybind("Tecla do Touch Fling", "TouchFlingKey", "Liga/desliga Touch Fling")
+addSection("Spectate")
+addDropdown("Spectate Player", "SpectateTarget", "Seguir um player")
+addButton("Spectar", "Começa a spectar o player selecionado", function()
+	local name = Settings.SpectateTarget
+	if not name or name == "Nenhum" then
+		notify("Spectate: selecione um player", "off")
+		return
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if (plr.DisplayName == name or plr.Name == name) and plr ~= LocalPlayer then
+			local ok = Spectate.start(plr)
+			notify(ok and ("Spectando: " .. plr.DisplayName) or "Spectate falhou", ok and "on" or "off")
+			return
+		end
+	end
+end)
+addButton("Parar Spectate", "Volta a câmera pro seu personagem", function()
+	Spectate.stop()
+	notify("Spectate parado", "info")
+end)
 addSection("Teclas (PC)")
 addKeybind("Tecla do Fling Bots", "FlingKey", "Liga/desliga Fling")
 addKeybind("Tecla do Fling Player", "FlingPlayerKey", "Arremessa o player selecionado")
@@ -2571,9 +2747,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v80 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v82 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v80 carregado com sucesso!")
+	print("[TestToolkit] v82 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2612,6 +2788,10 @@ UserInputService.InputBegan:Connect(function(input)
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 	elseif input.KeyCode == Settings.FlingPlayerKey then
 		task.spawn(function() Fling.flingSelected() end)
+	elseif input.KeyCode == Settings.TouchFlingKey then
+		Settings.TouchFling = not Settings.TouchFling
+		notify("Touch Fling " .. (Settings.TouchFling and "ligado" or "desligado"), Settings.TouchFling and "on" or "off")
+		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 	end
 end)
 
@@ -2679,6 +2859,8 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
 			end
+			if Settings.TouchFling then parts[#parts + 1] = "💥 TouchFling" end
+			if Settings.Spectating then parts[#parts + 1] = "👁 " .. tostring(Settings.SpectateTarget) end
 			hud.Text = table.concat(parts, "  •  ")
 		end
 	end)
