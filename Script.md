@@ -1,7 +1,9 @@
 --[[
-    TestToolkit v85
-    - Fling K1LAS1K interno (9e9 + BodyVelocity P=20000 + 60 iterações)
-    - Botão pra carregar o K1LAS1K original externamente
+    TestToolkit v86
+    - Fling Player com o MÉTODO K1LAS1K EXATO
+    - FallenPartsDestroyHeight = NaN
+    - FPos (força posicional + velocidade)
+    - Loop de flings alternados
     - Touch Fling com o mesmo método
     - Silent Aim via flick
     - Wall check via câmera
@@ -122,7 +124,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v85 carregando...")
+bootShow("TestToolkit v86 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1073,38 +1075,65 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- FLING K1LAS1K (9e9 + BodyVelocity P=20000 + 60 iterações)
+-- FLING K1LAS1K EXATO (FallenPartsDestroyHeight + FPos)
 --------------------------------------------------------------------
 local Fling = {}
 do
+	local FlingActive = false
+	local FlingConnection = nil
 	local lastFling = 0
 
-	-- Fling bot (NPCs próximos)
-	local function doFling(targetRoot, myRoot, power)
-		if not targetRoot or not targetRoot.Parent then return end
-		if not myRoot or not myRoot.Parent then return end
-		local hum = targetRoot.Parent:FindFirstChildOfClass("Humanoid")
-		if hum and hum.Health <= 0 then return end
-		local bv = Instance.new("BodyVelocity")
-		bv.MaxForce = Vector3.one * math.huge
-		bv.P = 20000
-		bv.Velocity = Vector3.new(9e9, 9e9, 9e9)
-		bv.Parent = targetRoot
-		local bav = Instance.new("BodyAngularVelocity")
-		bav.MaxTorque = Vector3.one * math.huge
-		bav.P = 20000
-		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
-		bav.Parent = targetRoot
-		local endTime = os.clock() + 0.6
-		while os.clock() < endTime do
-			if not targetRoot.Parent then break end
-			RunService.Heartbeat:Wait()
-		end
-		if bv.Parent then bv:Destroy() end
-		if bav.Parent then bav:Destroy() end
+	-- Função FPos (Força Posicional)
+	local function FPos(BasePart, Pos, Ang, RootPart, Character, myRoot)
+		RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+		Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+		myRoot.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+		myRoot.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
 	end
 
-	-- FLING PLAYER K1LAS1K EXATO
+	-- Função principal de fling
+	local function SFBasePart(BasePart, myRoot, myCharacter, myHumanoid)
+		local TimeToWait = 2
+		local Time = tick()
+		local Angle = 0
+
+		repeat
+			if myRoot and myHumanoid then
+				if BasePart.Velocity.Magnitude < 50 then
+					Angle = Angle + 100
+					FPos(BasePart, CFrame.new(0, 1.5, 0) + myHumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0) + myHumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, 1.5, 0) + myHumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0) + myHumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, 1.5, 0) + myHumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0) + myHumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+				else
+					FPos(BasePart, CFrame.new(0, 1.5, myHumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, -myHumanoid.WalkSpeed), CFrame.Angles(0, 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, 1.5, myHumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+					FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), myRoot, myCharacter, myRoot)
+					task.wait()
+				end
+			end
+		until Time + TimeToWait < tick() or not FlingActive
+	end
+
+	-- Inicia o fling em um alvo
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1124,62 +1153,38 @@ do
 
 		if THumanoid.Health <= 0 then return false end
 
-		local SavedCameraSubject = Camera.CameraSubject
-		local SavedCameraType = Camera.CameraType
+		-- Salva FallenPartsDestroyHeight
+		local oldFPDH = workspace.FallenPartsDestroyHeight
+		-- TRUQUE CRÍTICO: Define como NaN para evitar destruição
+		workspace.FallenPartsDestroyHeight = 0/0
 
+		-- Cria BodyVelocity no NOSSO RootPart (não no alvo)
+		local BV = Instance.new("BodyVelocity")
+		BV.Parent = RootPart
+		BV.Velocity = Vector3.new(0, 0, 0)
+		BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+
+		-- Impede sentar
 		pcall(function()
-			Camera.CameraSubject = THumanoid
-			Camera.CameraType = Enum.CameraType.Custom
+			Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
 		end)
 
-		task.wait()
+		-- Ativa o loop de fling
+		FlingActive = true
 
-		-- BodyVelocity + BodyAngularVelocity no alvo (P = 20000)
-		local bv = Instance.new("BodyVelocity")
-		bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-		bv.P = 20000
-		bv.Velocity = Vector3.new(9e9, 9e9, 9e9)
-		bv.Parent = TRootPart
+		task.spawn(function()
+			if TRootPart then
+				SFBasePart(TRootPart, RootPart, Character, Humanoid)
+			elseif TCharacter:FindFirstChild("Head") then
+				SFBasePart(TCharacter:FindFirstChild("Head"), RootPart, Character, Humanoid)
+			end
 
-		local bav = Instance.new("BodyAngularVelocity")
-		bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-		bav.P = 20000
-		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
-		bav.Parent = TRootPart
-
-		-- 60 iterações
-		for i = 1, 60 do
-			if not Character or not Character.Parent then break end
-			if not RootPart or not RootPart.Parent then break end
-			if not TCharacter or not TCharacter.Parent then break end
-			if not TRootPart or not TRootPart.Parent then break end
-			if Humanoid.Health <= 0 then break end
-			if THumanoid.Health <= 0 then break end
-
-			RootPart.CFrame = TRootPart.CFrame
-
-			RootPart.Velocity = Vector3.new(9e9, 9e9, 9e9)
-			RootPart.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
-
-			TRootPart.Velocity = Vector3.new(9e9, 9e9, 9e9)
-			TRootPart.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
-
+			-- Quando terminar, restaura
+			FlingActive = false
 			pcall(function()
-				bv.Velocity = Vector3.new(9e9, 9e9, 9e9)
-				bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+				if BV.Parent then BV:Destroy() end
+				workspace.FallenPartsDestroyHeight = oldFPDH
 			end)
-
-			RunService.Heartbeat:Wait()
-		end
-
-		pcall(function()
-			if bv.Parent then bv:Destroy() end
-			if bav.Parent then bav:Destroy() end
-		end)
-
-		pcall(function()
-			Camera.CameraSubject = SavedCameraSubject or Humanoid
-			Camera.CameraType = SavedCameraType or Enum.CameraType.Custom
 		end)
 
 		return true
@@ -1226,7 +1231,7 @@ do
 					if not plr then
 						local r = getRoot(model)
 						if r and (r.Position - myPos).Magnitude <= range then
-							doFling(r, myRoot, Settings.FlingPower)
+							doFlingPlayer(plr or model)
 						end
 					end
 				end
@@ -1272,60 +1277,62 @@ do
 		local RootPart = Character:FindFirstChild("HumanoidRootPart")
 		if not RootPart then return false end
 
-		local SavedCameraSubject = Camera.CameraSubject
-		local SavedCameraType = Camera.CameraType
+		local oldFPDH = workspace.FallenPartsDestroyHeight
+		workspace.FallenPartsDestroyHeight = 0/0
+
+		local BV = Instance.new("BodyVelocity")
+		BV.Parent = RootPart
+		BV.Velocity = Vector3.new(0, 0, 0)
+		BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 
 		pcall(function()
-			Camera.CameraSubject = THumanoid
-			Camera.CameraType = Enum.CameraType.Custom
+			Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
 		end)
 
 		task.spawn(function()
-			task.wait()
+			local FlingActive = true
+			local TimeToWait = 1
+			local Time = tick()
+			local Angle = 0
 
-			local bv = Instance.new("BodyVelocity")
-			bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-			bv.P = 20000
-			bv.Velocity = Vector3.new(9e9, 9e9, 9e9)
-			bv.Parent = targetRoot
-
-			local bav = Instance.new("BodyAngularVelocity")
-			bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-			bav.P = 20000
-			bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
-			bav.Parent = targetRoot
-
-			for i = 1, 60 do
-				if not Character or not Character.Parent then break end
-				if not RootPart or not RootPart.Parent then break end
-				if not TCharacter or not TCharacter.Parent then break end
-				if not targetRoot or not targetRoot.Parent then break end
-				if Humanoid.Health <= 0 then break end
-				if THumanoid.Health <= 0 then break end
-
-				RootPart.CFrame = targetRoot.CFrame
-				RootPart.Velocity = Vector3.new(9e9, 9e9, 9e9)
-				RootPart.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
-
-				targetRoot.Velocity = Vector3.new(9e9, 9e9, 9e9)
-				targetRoot.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
-
-				pcall(function()
-					bv.Velocity = Vector3.new(9e9, 9e9, 9e9)
-					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
-				end)
-
-				RunService.Heartbeat:Wait()
-			end
-
-			pcall(function()
-				if bv.Parent then bv:Destroy() end
-				if bav.Parent then bav:Destroy() end
-			end)
+			repeat
+				if RootPart and Humanoid and targetRoot.Parent then
+					if targetRoot.Velocity.Magnitude < 50 then
+						Angle = Angle + 100
+						FPos(targetRoot, CFrame.new(0, 1.5, 0) + Humanoid.MoveDirection * targetRoot.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0) + Humanoid.MoveDirection * targetRoot.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, 1.5, 0) + Humanoid.MoveDirection * targetRoot.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0) + Humanoid.MoveDirection * targetRoot.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, 1.5, 0) + Humanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0) + Humanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+					else
+						FPos(targetRoot, CFrame.new(0, 1.5, Humanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, -Humanoid.WalkSpeed), CFrame.Angles(0, 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, 1.5, Humanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0), RootPart, Character, RootPart)
+						task.wait()
+						FPos(targetRoot, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0), RootPart, Character, RootPart)
+						task.wait()
+					end
+				end
+			until Time + TimeToWait < tick() or not FlingActive
 
 			pcall(function()
-				Camera.CameraSubject = SavedCameraSubject or Humanoid
-				Camera.CameraType = SavedCameraType or Enum.CameraType.Custom
+				if BV.Parent then BV:Destroy() end
+				workspace.FallenPartsDestroyHeight = oldFPDH
 			end)
 		end)
 
@@ -1450,7 +1457,7 @@ LocalPlayer.CharacterAdded:Connect(function()
 	lastSafe = nil
 	if Settings.SeatInvisible then
 		Settings.SeatInvisible = false
-		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
+		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible._toggle) end
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 	end
 end)
@@ -1927,7 +1934,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v85"
+title.Text = "Test Toolkit v86"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2616,10 +2623,10 @@ addToggle("Fling Bots", "Fling", "Arremessa bots")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Força")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
-addSection("Fling Player (métodos)")
-addInfo("Escolha o player e clique em um dos botões.", 30)
+addSection("Fling Player (K1LAS1K EXATO)")
+addInfo("Escolha o player e clique em FLING PLAYER.", 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
-addButton("FLING PLAYER (K1LAS1K interno)", "Usa o método 9e9 + BodyVelocity P=20000", function()
+addButton("FLING PLAYER (K1LAS1K)", "Arremessa usando FallenPartsDestroyHeight + FPos", function()
 	local name = Settings.FlingPlayerTarget
 	if not name or name == "Nenhum" then
 		notify("Fling: selecione um player", "off")
@@ -2634,19 +2641,6 @@ addButton("FLING PLAYER (K1LAS1K interno)", "Usa o método 9e9 + BodyVelocity P=
 			return
 		end
 	end
-end)
-addButton("ABRIR MENU K1LAS1K ORIGINAL", "Carrega a GUI completa do K1LAS1K", function()
-	task.spawn(function()
-		notify("Carregando K1LAS1K...", "info")
-		local ok, err = pcall(function()
-			loadstring(game:HttpGet("https://raw.githubusercontent.com/K1LAS1K/Ultimate-Fling-GUI/main/flingscript.lua"))()
-		end)
-		if not ok then
-			notify("Falha: " .. tostring(err), "off")
-		else
-			notify("K1LAS1K carregado!", "on")
-		end
-	end)
 end)
 addButton("FLING TODOS OS PLAYERS", "Arremessa TODOS os players do servidor", function()
 	local count = 0
@@ -2852,9 +2846,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v85 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v86 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v85 carregado com sucesso!")
+	print("[TestToolkit] v86 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
