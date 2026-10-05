@@ -3821,37 +3821,49 @@ addSection("Status")
 local mm2Status = addInfo("Aguardando...", 66)
 
 table.insert(refreshers, function()
-	if mm2Status and mm2Status.Parent then
-		local murd, sher, inno = 0, 0, 0
-		for model, hum in pairs(humanoids) do
-			if hum and hum.Parent and hum.Health > 0 then
-				local plr = Players:GetPlayerFromCharacter(model)
-				local role = MM2.getRole(model, plr)
-				if role == "murder" then murd += 1
-				elseif role == "sheriff" then sher += 1
-				elseif role == "innocent" then inno += 1 end
+	pcall(function()
+		if mm2Status and mm2Status.Parent then
+			local murd, sher, inno = 0, 0, 0
+			if humanoids then
+				for model, hum in pairs(humanoids) do
+					if hum and hum.Parent and hum.Health > 0 then
+						local plr = Players:GetPlayerFromCharacter(model)
+						local role = MM2.getRole(model, plr)
+						if role == "murder" then murd += 1
+						elseif role == "sheriff" then sher += 1
+						elseif role == "innocent" then inno += 1 end
+					end
+				end
 			end
-		end
-		local drops = #MM2.getDroppedGuns()
-		local myRole = MM2.getMyRole()
-		local myRoleText = "?"
-		if myRole == "innocent" then myRoleText = "INOCENTE"
-		elseif myRole == "murder" then myRoleText = "MURDER"
-		elseif myRole == "sheriff" then myRoleText = "SHERIFF" end
 
-		local smartTargets = ""
-		if Settings.MM2SmartAim then
-			if myRole == "innocent" or myRole == "sheriff" then
-				smartTargets = " (mirando só em Murder)"
-			elseif myRole == "murder" then
-				smartTargets = " (mirando em todos)"
+			local drops = 0
+			local okDrops, d = pcall(function() return #MM2.getDroppedGuns() end)
+			if okDrops and type(d) == "number" then drops = d end
+
+			local myRole = MM2.getMyRole()
+			local myRoleText = "?"
+			if myRole == "innocent" then myRoleText = "INOCENTE"
+			elseif myRole == "murder" then myRoleText = "MURDER"
+			elseif myRole == "sheriff" then myRoleText = "SHERIFF" end
+
+			local smartTargets = ""
+			if Settings.MM2SmartAim then
+				if myRole == "innocent" or myRole == "sheriff" then
+					smartTargets = " (mirando só em Murder)"
+				elseif myRole == "murder" then
+					smartTargets = " (mirando em todos)"
+				else
+					smartTargets = " (função não detectada)"
+				end
 			end
-		end
 
-		mm2Status.Text = string.format(
-			"Você é: %s%s\nMurder: %d | Sheriff: %d | Inocente: %d | Armas dropadas: %d",
-			myRoleText, smartTargets, murd, sher, inno, drops)
-	end
+			mm2Status.Text = string.format(
+				"Você é: %s%s\nMurder: %d | Sheriff: %d | Inocente: %d | Armas dropadas: %d",
+				tostring(myRoleText), tostring(smartTargets),
+				tonumber(murd) or 0, tonumber(sher) or 0,
+				tonumber(inno) or 0, tonumber(drops) or 0)
+		end
+	end)
 end)
 
 --------------------------------------------------------------------
