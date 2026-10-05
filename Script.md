@@ -276,10 +276,36 @@ local function getAimOrigin()
 	return UserInputService:GetMouseLocation()
 end
 
--- Pega a parte de mira do alvo (usado pelo trigger bot)
-local function getAimPart(target)
-	local m = target.Model
-	return m:FindFirstChild("Head") or m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso") or target.Root
+-- Lista de todas as partes do corpo (R6 + R15) usadas pelo trigger bot
+local TRIGGER_BODY_PARTS = {
+	"Head",
+	"UpperTorso", "LowerTorso", "Torso",
+	"LeftUpperArm", "RightUpperArm",
+	"LeftLowerArm", "RightLowerArm",
+	"LeftHand", "RightHand",
+	"LeftUpperLeg", "RightUpperLeg",
+	"LeftLowerLeg", "RightLowerLeg",
+	"LeftFoot", "RightFoot",
+	"HumanoidRootPart",
+}
+
+local function getBodyParts(model)
+	local parts = {}
+	for _, name in ipairs(TRIGGER_BODY_PARTS) do
+		local p = model:FindFirstChild(name)
+		if p and p:IsA("BasePart") then
+			parts[#parts + 1] = p
+		end
+	end
+	return parts
+end
+
+-- Checagem de time explícita (além do que o getTargets já faz)
+local function isEnemyTarget(t)
+	if not t then return false end
+	if not t.Player then return true end          -- NPC/bot
+	if t.Player == LocalPlayer then return false end
+	return isEnemy(t.Model, t.Player)
 end
 
 --------------------------------------------------------------------
@@ -500,18 +526,23 @@ RunService.RenderStepped:Connect(function()
 
 	local origin = getAimOrigin()
 	local fov = Settings.TriggerFOV
-	local camPos = Camera.CFrame.Position
 	local best, bestD = nil, math.huge
 
 	for _, t in ipairs(getTargets("trigger")) do
-		local part = getAimPart(t)
-		if part and part.Parent then
-			local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
-			if onScreen and sp.Z > 0 then
-				local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
-				if d <= fov and d < bestD then
-					if not Settings.TriggerVisible or hasLineOfSight(part, t.Model) then
-						best, bestD = t, d
+		-- Team check reforçado
+		if isEnemyTarget(t) then
+			local parts = getBodyParts(t.Model)
+			for i = 1, #parts do
+				local part = parts[i]
+				if part.Parent then
+					local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+					if onScreen and sp.Z > 0 then
+						local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
+						if d <= fov and d < bestD then
+							if not Settings.TriggerVisible or hasLineOfSight(part, t.Model) then
+								best, bestD = t, d
+							end
+						end
 					end
 				end
 			end
