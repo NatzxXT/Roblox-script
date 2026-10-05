@@ -1,10 +1,12 @@
 --[[
-    TestToolkit v59.4 - LocalScript (100% cliente)
+    TestToolkit v59.5 - LocalScript (100% cliente)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
 
-    v59.4:
-      - Corrigido: ESP e Aimbot não pegam mais corpos caídos (verificação tripla)
-      - Seat Invisibility mantido no original (invisível para outros players)
+    v59.5:
+      - Corrigido: ESP e Aimbot não pegam corpos caídos (verificação tripla)
+      - Seat Invisibility mantido no original
+      - NOVO: ESP Murder Mystery 2 (Inocente=Verde, Murder=Vermelho, Sheriff=Azul)
+      - NOVO: Destaque da arma dropada em amarelo
 ]]
 
 local Players = game:GetService("Players")
@@ -60,7 +62,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v59.4 carregando...")
+bootShow("TestToolkit v59.5 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -107,6 +109,14 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true, Tracers = false,
 
+	-- MM2 ESP
+	MM2Mode = false,
+	MM2InnocentColor = Color3.fromRGB(0, 255, 0),
+	MM2MurderColor = Color3.fromRGB(255, 0, 0),
+	MM2SheriffColor = Color3.fromRGB(0, 100, 255),
+	MM2ShowDroppedGun = true,
+	MM2DroppedGunColor = Color3.fromRGB(255, 255, 0),
+
 	SeatInvisible = false,
 	SeatInvisibleX = -25.95,
 	SeatInvisibleY = 84,
@@ -139,7 +149,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, PerfMode = true, FPSUnlock = true, MobileEdit = true,
 	HUDEdit = true, Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true,
+	SeatInvisible = true, MM2Mode = true,
 }
 
 local function serializeSettings()
@@ -151,6 +161,8 @@ local function serializeSettings()
 				data[k] = v
 			elseif t == "EnumItem" then
 				data[k] = { tostring(v.EnumType), v.Name }
+			elseif t == "Color3" then
+				data[k] = { "Color3", v.R, v.G, v.B }
 			end
 		end
 	end
@@ -170,6 +182,8 @@ local function applySavedConfig(data)
 				if ok and typeof(item) == "EnumItem" and item.EnumType == cur.EnumType then
 					Settings[k] = item
 				end
+			elseif t == "Color3" and type(v) == "table" and v[1] == "Color3" then
+				Settings[k] = Color3.new(v[2], v[3], v[4])
 			end
 		end
 	end
@@ -276,6 +290,137 @@ local function isTeammate(model, plr)
 end
 
 --------------------------------------------------------------------
+-- MM2 DETECÇÃO DE FUNÇÃO
+--------------------------------------------------------------------
+local MM2 = {}
+do
+	local roleCache = setmetatable({}, { __mode = "k" })
+	local ROLE_KEYS = {
+		"Role", "role", "Team", "team", "Class", "class",
+		"Rank", "rank", "Type", "type", "Murderer", "murderer",
+	}
+
+	local function toRole(v)
+		if type(v) ~= "string" then return nil end
+		v = string.lower(v)
+		if string.find(v, "murder") then return "murder" end
+		if string.find(v, "sheriff") or string.find(v, "cop") then return "sheriff" end
+		if string.find(v, "inno") or string.find(v, "hero") or string.find(v, "civil") then return "innocent" end
+		return nil
+	end
+
+	local function checkTags(inst)
+		for _, tag in ipairs(inst:GetTags()) do
+			local r = toRole(tag)
+			if r then return r end
+		end
+		return nil
+	end
+
+	local function checkAttrs(inst)
+		for _, key in ipairs(ROLE_KEYS) do
+			local v = inst:GetAttribute(key)
+			local r = toRole(v)
+			if r then return r end
+		end
+		return nil
+	end
+
+	local function checkValues(inst)
+		for _, key in ipairs(ROLE_KEYS) do
+			local child = inst:FindFirstChild(key)
+			if child and child:IsA("ValueBase") then
+				local r = toRole(child.Value)
+				if r then return r end
+			end
+			if child and child:IsA("StringValue") then
+				local r = toRole(child.Value)
+				if r then return r end
+			end
+		end
+		return nil
+	end
+
+	local function scanDescendants(inst)
+		local n = 0
+		for _, d in ipairs(inst:GetDescendants()) do
+			local r = checkTags(d) or checkAttrs(d) or checkValues(d)
+			if r then return r end
+			n += 1
+			if n > 100 then break end
+		end
+		return nil
+	end
+
+	function MM2.getRole(model, plr)
+		if not model and not plr then return nil end
+		local key = plr or model
+		local c = roleCache[key]
+		local now = os.clock()
+		if c and now - c.t < 0.5 then return c.v end
+		if not c then c = { v = nil, t = 0 }; roleCache[key] = c end
+
+		local role = nil
+		if plr then
+			role = checkTags(plr) or checkAttrs(plr) or checkValues(plr) or scanDescendants(plr)
+		end
+		if not role and model then
+			role = checkTags(model) or checkAttrs(model) or checkValues(model)
+				or scanDescendants(model)
+		end
+		-- Fallback: verifica ferramentas no personagem
+		if not role and model then
+			for _, tool in ipairs(model:GetChildren()) do
+				if tool:IsA("Tool") then
+					local n = string.lower(tool.Name)
+					if string.find(n, "knife") or string.find(n, "murder") then
+						role = "murder"; break
+					elseif string.find(n, "gun") or string.find(n, "revolver")
+						or string.find(n, "sheriff") then
+						role = "sheriff"; break
+					end
+				end
+			end
+		end
+
+		c.v = role
+		c.t = now
+		return role
+	end
+
+	function MM2.clearCache()
+		table.clear(roleCache)
+	end
+
+	-- Cache de armas dropadas
+	local dropCache = setmetatable({}, { __mode = "k" })
+	local dropAt = 0
+	local dropped = {}
+
+	function MM2.getDroppedGuns()
+		local now = os.clock()
+		if now - dropAt < 0.4 then return dropped end
+		dropAt = now
+		table.clear(dropped)
+		table.clear(dropCache)
+		for _, d in ipairs(Workspace:GetChildren()) do
+			if d:IsA("Tool") then
+				local n = string.lower(d.Name)
+				if string.find(n, "gun") or string.find(n, "revolver")
+					or string.find(n, "knife") then
+					local handle = d:FindFirstChild("Handle")
+					if handle and handle:IsA("BasePart") then
+						dropped[#dropped + 1] = d
+						dropCache[d] = handle
+					end
+				end
+			end
+		end
+		return dropped
+	end
+end
+
+--------------------------------------------------------------------
 -- TARGETS (VERIFICAÇÃO DE CORPO CAÍDO APRIMORADA)
 --------------------------------------------------------------------
 local humanoids = {}
@@ -318,52 +463,36 @@ local CACHE_TTL = 0.15
 -- VERIFICAÇÃO AGRESSIVA: Retorna true apenas se o alvo estiver VIVO e EM PÉ
 local function isAlive(hum)
 	if not hum or hum.Health <= 0 then return false end
-	
-	-- 1. Verifica estado do Humanoid
+
 	local state = hum:GetState()
-	if state == Enum.HumanoidStateType.Dead 
-		or state == Enum.HumanoidStateType.Physics 
-		or state == Enum.HumanoidStateType.Ragdoll 
+	if state == Enum.HumanoidStateType.Dead
+		or state == Enum.HumanoidStateType.Physics
+		or state == Enum.HumanoidStateType.Ragdoll
 		or state == Enum.HumanoidStateType.FallingDown then
 		return false
 	end
-	
-	-- 2. Verifica se a vida está muito baixa (corpos mortos no MM2 tem vida 1)
+
 	if hum.Health < 5 then return false end
-	
-	-- 3. Verifica se o corpo está deitado no chão
+
 	local root = hum.Parent:FindFirstChild("HumanoidRootPart")
 	if root then
-		-- Pega a direção "para cima" do corpo
 		local upVector = root.CFrame.UpVector
 		local worldUp = Vector3.new(0, 1, 0)
 		local dot = upVector:Dot(worldUp)
-		
-		-- Se o corpo está deitado, o upVector fica perpendicular ao mundo (dot perto de 0)
-		-- Se está em pé, o dot é perto de 1
-		if dot < 0.5 then
-			return false  -- Corpo deitado/caído
-		end
-		
-		-- 4. Verifica se o corpo está no chão (não pulando/caindo)
-		-- Se estiver no ar e com velocidade vertical muito negativa, está caindo (morto)
+		if dot < 0.5 then return false end
+
 		if hum.FloorMaterial == Enum.Material.Air then
 			local vel = root.AssemblyLinearVelocity
-			if vel.Y < -50 then
-				return false  -- Caindo muito rápido = morto
-			end
+			if vel.Y < -50 then return false end
 		end
 	end
-	
-	-- 5. Verifica se o Head está no lugar certo (corpos caídos tem Head baixo)
+
 	local head = hum.Parent:FindFirstChild("Head")
 	if head and root then
 		local heightDiff = head.Position.Y - root.Position.Y
-		if heightDiff < 0.5 then  -- Cabeça muito perto do root = deitado
-			return false
-		end
+		if heightDiff < 0.5 then return false end
 	end
-	
+
 	return true
 end
 
@@ -591,7 +720,7 @@ local Theme = {
 local function tween(obj, props, t, style, dir)
 	local tw = TweenService:Create(
 		obj,
-		TweenInfo.new(t or 0.18, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
+		TweenInfo.new(t or 0.18, style or Style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
 		props)
 	tw:Play()
 	return tw
@@ -1620,8 +1749,7 @@ do
 	SeatInvisible.forceOff = function()
 		if active then
 			active = false
-			Settings.SeatInvisible = false
-			deactivate()
+			Settings.SeatInvisible = false			deactivate()
 			if uiRefresh then pcall(uiRefresh) end
 		end
 	end
@@ -2442,7 +2570,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v59.4"
+title.Text = "Test Toolkit v59.5"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2941,6 +3069,73 @@ local function addButton(text, desc, onClick)
 	end)
 end
 
+local function addColorPicker(text, key, desc)
+	local row = newRow(desc and 66 or 50, "TextButton")
+	hover(row)
+	rowLabel(row, text, desc, 60)
+	local preview = Instance.new("Frame")
+	preview.AnchorPoint = Vector2.new(1, 0.5)
+	preview.Position = UDim2.new(1, -12, 0.5, 0)
+	preview.Size = UDim2.fromOffset(44, 26)
+	preview.BackgroundColor3 = Settings[key]
+	preview.BorderSizePixel = 0
+	preview.Parent = row
+	corner(preview, 6)
+	stroke(preview, Color3.new(1, 1, 1), 0.4, 1)
+
+	local hue = Instance.new("TextLabel")
+	hue.BackgroundTransparency = 1
+	hue.AnchorPoint = Vector2.new(1, 1)
+	hue.Position = UDim2.new(1, -12, 0.5, -18)
+	hue.Size = UDim2.fromOffset(100, 12)
+	hue.Font = Enum.Font.Gotham
+	hue.TextSize = 10
+	hue.TextColor3 = Theme.SubText
+	hue.TextXAlignment = Enum.TextXAlignment.Right
+	hue.Text = string.format("R:%.0f G:%.0f B:%.0f",
+		Settings[key].R * 255, Settings[key].G * 255, Settings[key].B * 255)
+	hue.Parent = row
+
+	local function update()
+		preview.BackgroundColor3 = Settings[key]
+		hue.Text = string.format("R:%.0f G:%.0f B:%.0f",
+			Settings[key].R * 255, Settings[key].G * 255, Settings[key].B * 255)
+	end
+
+	row.MouseButton1Click:Connect(function()
+		-- Cicla por cores pré-definidas
+		local presets = {
+			Color3.fromRGB(0, 255, 0),
+			Color3.fromRGB(0, 200, 0),
+			Color3.fromRGB(0, 150, 0),
+			Color3.fromRGB(50, 255, 50),
+			Color3.fromRGB(255, 0, 0),
+			Color3.fromRGB(200, 0, 0),
+			Color3.fromRGB(255, 50, 50),
+			Color3.fromRGB(0, 100, 255),
+			Color3.fromRGB(0, 150, 255),
+			Color3.fromRGB(100, 150, 255),
+			Color3.fromRGB(255, 255, 0),
+			Color3.fromRGB(255, 200, 0),
+			Color3.fromRGB(255, 255, 255),
+		}
+		local cur = Settings[key]
+		local idx = 1
+		for i, c in ipairs(presets) do
+			if math.abs(c.R - cur.R) < 0.01 and math.abs(c.G - cur.G) < 0.01
+				and math.abs(c.B - cur.B) < 0.01 then
+				idx = (i % #presets) + 1
+				break
+			end
+		end
+		Settings[key] = presets[idx]
+		update()
+		notify(text .. " alterado", "info")
+	end)
+
+	table.insert(refreshers, update)
+end
+
 --------------------------------------------------------------------
 -- PERFORMANCE + FPS
 --------------------------------------------------------------------
@@ -3144,6 +3339,7 @@ local function resetAimCaches()
 	table.clear(teamCache)
 	myTeamAt = -1
 	candTime = -1
+	MM2.clearCache()
 end
 
 local function markCurrentAsAlly()
@@ -3422,6 +3618,17 @@ addSection("Limites")
 addSlider("Distância máxima", "ESPMaxDist", 0, 3000, 50, 0, "0 = sem limite")
 addSlider("Máx. de alvos", "ESPMaxTargets", 1, 30, 1, 0, "Menos = mais FPS")
 addSlider("Transparência do preenchimento", "ESPFillTrans", 0, 1, 0.05, 2, "0 = sólido")
+
+addSection("Murder Mystery 2")
+addInfo("Mostra a função de cada jogador com cor específica. "
+	.. "Inocente = Verde, Murder = Vermelho, Sheriff = Azul. "
+	.. "Arma dropada = Amarelo.", 54)
+addToggle("Ativar modo MM2", "MM2Mode", "Detecta e colore por função")
+addColorPicker("Cor do Inocente", "MM2InnocentColor", "Verde por padrão")
+addColorPicker("Cor do Murder", "MM2MurderColor", "Vermelho por padrão")
+addColorPicker("Cor do Sheriff", "MM2SheriffColor", "Azul por padrão")
+addToggle("Destacar arma dropada", "MM2ShowDroppedGun", "Mostra a arma no chão")
+addColorPicker("Cor da arma dropada", "MM2DroppedGunColor", "Amarelo por padrão")
 
 --------------------------------------------------------------------
 -- ABA: JOGADOR
@@ -3853,12 +4060,109 @@ local function destroyEsp(model, o)
 	espObjs[model] = nil
 end
 
+-- ESP para arma dropada
+local droppedEsp = {}
+local droppedAt = 0
+
+local function makeDropEsp(tool)
+	local hl = Instance.new("Highlight")
+	hl.Name = "TTDropHL"
+	hl.Adornee = tool
+	hl.FillColor = Settings.MM2DroppedGunColor
+	hl.OutlineColor = Settings.MM2DroppedGunColor
+	hl.FillTransparency = 0.3
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = gui
+
+	local name = Instance.new("TextLabel")
+	name.BackgroundTransparency = 1
+	name.Font = Enum.Font.GothamBold
+	name.TextSize = 14
+	name.TextColor3 = Settings.MM2DroppedGunColor
+	name.TextStrokeTransparency = 0.3
+	name.Size = UDim2.fromOffset(160, 18)
+	name.AnchorPoint = Vector2.new(0.5, 1)
+	name.Text = "🔫 ARMA DROPADA"
+	name.Visible = true
+	name.ZIndex = 2
+	name.Parent = espRoot
+
+	return { HL = hl, Name = name, Tool = tool }
+end
+
+local function updateDroppedGuns(now)
+	if not Settings.MM2ShowDroppedGun or not Settings.MM2Mode then
+		for tool, o in pairs(droppedEsp) do
+			pcall(function() o.HL:Destroy() end)
+			pcall(function() o.Name:Destroy() end)
+			droppedEsp[tool] = nil
+		end
+		return
+	end
+	if now - droppedAt < 0.3 then
+		-- Apenas atualiza posição do texto
+		for tool, o in pairs(droppedEsp) do
+			if tool.Parent and o.HL and o.HL.Parent then
+				local handle = tool:FindFirstChild("Handle")
+				if handle and handle:IsA("BasePart") then
+					local sp, on = Camera:WorldToViewportPoint(handle.Position + Vector3.new(0, 2, 0))
+					o.Name.Visible = on
+					if on then
+						o.Name.Position = UDim2.fromOffset(sp.X, sp.Y)
+					end
+					o.HL.FillColor = Settings.MM2DroppedGunColor
+					o.HL.OutlineColor = Settings.MM2DroppedGunColor
+					o.Name.TextColor3 = Settings.MM2DroppedGunColor
+				end
+			end
+		end
+		return
+	end
+	droppedAt = now
+	local guns = MM2.getDroppedGuns()
+	local seen = {}
+	for _, tool in ipairs(guns) do
+		seen[tool] = true
+		local o = droppedEsp[tool]
+		if not o then
+			o = makeDropEsp(tool)
+			droppedEsp[tool] = o
+		end
+		local handle = tool:FindFirstChild("Handle")
+		if handle and handle:IsA("BasePart") then
+			local sp, on = Camera:WorldToViewportPoint(handle.Position + Vector3.new(0, 2, 0))
+			o.Name.Visible = on
+			if on then
+				o.Name.Position = UDim2.fromOffset(sp.X, sp.Y)
+			end
+		end
+	end
+	for tool, o in pairs(droppedEsp) do
+		if not seen[tool] then
+			pcall(function() o.HL:Destroy() end)
+			pcall(function() o.Name:Destroy() end)
+			droppedEsp[tool] = nil
+		end
+	end
+end
+
 local function px(v) return math.floor(v + 0.5) end
 
 local function drawEsp(o, t, dist, now, vp)
 	local model = t.Model
 	local color = t.Teammate and ALLY_COLOR
 		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
+	local mm2Role = nil
+
+	-- MM2 Mode: sobrescreve a cor pela função
+	if Settings.MM2Mode then
+		mm2Role = MM2.getRole(model, t.Player)
+		if mm2Role == "innocent" then color = Settings.MM2InnocentColor
+		elseif mm2Role == "murder" then color = Settings.MM2MurderColor
+		elseif mm2Role == "sheriff" then color = Settings.MM2SheriffColor
+		end
+	end
 
 	if Settings.ESPHighlight then
 		local hl = o.HL
@@ -3935,8 +4239,15 @@ local function drawEsp(o, t, dist, now, vp)
 
 	if Settings.ShowNames then
 		local plr = t.Player
+		local roleTag = ""
+		if Settings.MM2Mode and mm2Role then
+			if mm2Role == "innocent" then roleTag = " [INOCENTE]"
+			elseif mm2Role == "murder" then roleTag = " [MURDER]"
+			elseif mm2Role == "sheriff" then roleTag = " [SHERIFF]" end
+		end
 		o.Name.Visible = true
-		o.Name.Text = (plr and plr.DisplayName or model.Name) .. "  [" .. math.floor(dist) .. "m]"
+		o.Name.Text = (plr and plr.DisplayName or model.Name) .. roleTag
+			.. "  [" .. math.floor(dist) .. "m]"
 		o.Name.TextColor3 = color
 		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
 	else
@@ -4043,6 +4354,8 @@ local function updateEsp(now)
 			if now - o.Seen > 3 or not model.Parent then destroyEsp(model, o) end
 		end
 	end
+	-- Arma dropada
+	updateDroppedGuns(now)
 end
 
 --------------------------------------------------------------------
@@ -4070,7 +4383,8 @@ hud.Active = true
 local hudDrag, hudDragStart, hudDragFrom = false, nil, nil
 hud.InputBegan:Connect(function(input)
 	if Settings.HUDEdit and (input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch) then		hudDrag = true
+		or input.UserInputType == Enum.UserInputType.Touch) then
+		hudDrag = true
 		hudDragStart = input.Position
 		hudDragFrom = Vector2.new(Settings.HUDX, Settings.HUDY)
 	end
@@ -4163,6 +4477,7 @@ RunService:BindToRenderStep("TestToolkitVisuals", Enum.RenderPriority.Camera.Val
 			else aimType = "OFF" end
 			parts[#parts + 1] = "Mira: " .. aimType
 		end
+		if Settings.MM2Mode then parts[#parts + 1] = "MM2" end
 		if Settings.Fly then parts[#parts + 1] = "Voo" end
 		if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 		if Settings.Fling then parts[#parts + 1] = "Fling" end
@@ -4182,7 +4497,7 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v59.4 carregado  •  "
+	bootShow("TestToolkit v59.5 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
 else
