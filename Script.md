@@ -4365,7 +4365,7 @@ table.insert(deviceListeners, applyDeviceLayout)
 layoutTabs()
 selectTab("aim", true)
 applyDeviceLayout()
-refreshAll()
+-- refreshAll() foi movido para depois da definição (mais abaixo)
 
 --------------------------------------------------------------------
 -- TECLAS
@@ -4463,6 +4463,9 @@ local function refreshAll()
 end
 
 uiRefresh = refreshAll
+
+-- Agora sim, chama o refresh depois que a função foi definida
+refreshAll()
 
 local function toggleSetting(key, label)
 	Settings[key] = not Settings[key]
