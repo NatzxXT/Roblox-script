@@ -1,6 +1,6 @@
 --[[
-    TestToolkit v88
-    - Fling Bots CORRIGIDO (aceita Model direto)
+    TestToolkit v89
+    - Fling Bots CORRIGIDO (só o bot voa, você fica parado)
     - Fling Player K1LAS1K (FallenPartsDestroyHeight + FPos)
     - Botão PARAR FLING
     - Touch Fling corrigido
@@ -123,7 +123,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v88 carregando...")
+bootShow("TestToolkit v89 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1074,7 +1074,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- FLING K1LAS1K + STOP FLING
+-- FLING
 --------------------------------------------------------------------
 local Fling = {}
 do
@@ -1137,7 +1137,7 @@ do
 		myRoot.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
 	end
 
-	-- Loop de fling
+	-- Loop de fling (só no alvo)
 	local function SFBasePart(BasePart, myRoot, myCharacter, myHumanoid)
 		local TimeToWait = 2
 		local Time = tick()
@@ -1182,7 +1182,54 @@ do
 		until Time + TimeToWait < tick()
 	end
 
-	-- Fling em Player OU Model (NPC)
+	-- FLING BOT: só o bot voa (você fica parado)
+	local function doFlingBot(targetModel)
+		if not targetModel or not targetModel.Parent then return false end
+		local hum = targetModel:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then return false end
+		local hrp = targetModel:FindFirstChild("HumanoidRootPart")
+		if not hrp then return false end
+
+		local bv = Instance.new("BodyVelocity")
+		bv.MaxForce = Vector3.one * math.huge
+		bv.P = math.huge
+		bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+		bv.Parent = hrp
+
+		local bav = Instance.new("BodyAngularVelocity")
+		bav.MaxTorque = Vector3.one * math.huge
+		bav.P = math.huge
+		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+		bav.Parent = hrp
+
+		task.spawn(function()
+			local endTime = os.clock() + 1.5
+			while os.clock() < endTime do
+				if not hrp.Parent or not hum.Parent then break end
+				if hum.Health <= 0 then break end
+
+				hrp.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+				hrp.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
+				pcall(function()
+					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+				end)
+
+				RunService.Heartbeat:Wait()
+			end
+
+			pcall(function()
+				if bv.Parent then bv:Destroy() end
+				if bav.Parent then bav:Destroy() end
+			end)
+		end)
+
+		return true
+	end
+
+	Fling.doFlingBot = doFlingBot
+
+	-- FLING PLAYER: método K1LAS1K (camera + FPos)
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1193,7 +1240,6 @@ do
 		local RootPart = Character:FindFirstChild("HumanoidRootPart")
 		if not RootPart then return false end
 
-		-- Aceita Player OU Model
 		local TCharacter
 		if typeof(target) == "Instance" and target:IsA("Model") then
 			TCharacter = target
@@ -1303,10 +1349,10 @@ do
 				if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
 					local plr = Players:GetPlayerFromCharacter(model)
 					if not plr then
-						-- NPC: passa o Model direto
+						-- NPC: usa o método que SÓ arremessa o bot
 						local r = getRoot(model)
 						if r and (r.Position - myPos).Magnitude <= range then
-							doFlingPlayer(model)
+							doFlingBot(model)
 						end
 					end
 				end
@@ -2015,7 +2061,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v88"
+title.Text = "Test Toolkit v89"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2700,9 +2746,8 @@ addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido")
 
 newPage("fling", "Fling")
 addSection("Fling Bots")
-addToggle("Fling Bots", "Fling", "Arremessa bots")
+addToggle("Fling Bots", "Fling", "Arremessa bots próximos")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
-addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Força")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player (K1LAS1K)")
 addInfo("Escolha o player e clique em FLING PLAYER.", 30)
@@ -2934,9 +2979,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v88 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v89 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v88 carregado com sucesso!")
+	print("[TestToolkit] v89 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
