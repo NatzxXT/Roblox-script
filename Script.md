@@ -1,8 +1,9 @@
 --[[
-    TestToolkit v78
+    TestToolkit v79
     Ctrl direito abre/fecha | Q alterna mira
     Aim via mousemoverel (Delta/Xeno universal)
     Trigger instantâneo com detecção robusta
+    Wall Check funcional em aim, silent e trigger
 ]]
 
 local Players = game:GetService("Players")
@@ -33,7 +34,7 @@ local Settings = {
 
 	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
-	AimMode = 2, AimPart = 3, AimWallCheck = false,
+	AimMode = 2, AimPart = 3, AimWallCheck = true,
 	Smoothness = 0.15, SnapAngle = 6, AutoPredict = true, PredictScale = 0.6,
 	AimAtCursor = true, Prediction = 0,
 	ShotType = 1, FireLock = true, Priority = 1,
@@ -114,7 +115,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v78 carregando...")
+bootShow("TestToolkit v79 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -162,7 +163,6 @@ local function getRoot(model)
 	return r
 end
 
--- Pega QUALQUER parte do alvo (Head, Torso, Root — o que existir)
 local function getBestPart(model)
 	return model:FindFirstChild("Head")
 		or model:FindFirstChild("UpperTorso")
@@ -225,27 +225,52 @@ _G.TT_getTargets = getTargets
 _G.TT_getRoot = getRoot
 _G.TT_humanoids = humanoids
 
+--------------------------------------------------------------------
+-- WALL CHECK v79 (melhorado)
+--------------------------------------------------------------------
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater = true
 local filterList = {}
 
 local function isIgnorableBlocker(hit)
-	return hit.Transparency >= 0.9 or hit:FindFirstAncestorOfClass("Accessory") ~= nil
+	if hit.Transparency >= 0.9 then return true end
+	if hit:FindFirstAncestorOfClass("Accessory") then return true end
+	if hit:FindFirstAncestorOfClass("Tool") then return true end
+	if hit.CanCollide == false and hit.Transparency > 0.5 then return true end
+	return false
 end
 
 local function hasLineOfSight(part, model)
 	if not Settings.AimWallCheck then return true end
+	if not part or not part.Parent then return false end
+	if not LocalPlayer.Character then return false end
+
 	table.clear(filterList)
 	filterList[1] = LocalPlayer.Character
 	filterList[2] = Camera
 	rayParams.FilterDescendantsInstances = filterList
-	local origin = Camera.CFrame.Position
+
+	-- Origem: cabeça do jogador (mais preciso que câmera)
+	local origin
+	local myHead = LocalPlayer.Character:FindFirstChild("Head")
+	if myHead and myHead:IsA("BasePart") then
+		origin = myHead.Position
+	else
+		origin = Camera.CFrame.Position
+	end
+
 	local dir = part.Position - origin
-	for _ = 1, 4 do
+
+	-- Até 6 raycasts
+	for _ = 1, 6 do
 		local result = Workspace:Raycast(origin, dir, rayParams)
 		if not result then return true end
 		local hit = result.Instance
+		if not hit then return true end
+
 		if hit:IsDescendantOf(model) then return true end
+
 		if isIgnorableBlocker(hit) then
 			filterList[#filterList + 1] = hit
 			rayParams.FilterDescendantsInstances = filterList
@@ -554,7 +579,7 @@ local function updateSilentTarget()
 end
 
 --------------------------------------------------------------------
--- TRIGGER BOT v78 - INSTANTÂNEO
+-- TRIGGER BOT v79 (com wall check correto)
 --------------------------------------------------------------------
 local triggerBotActive = false
 local lastTriggerShot = 0
@@ -564,11 +589,11 @@ local function getTriggerTarget()
 	if not Settings.TriggerBot then return nil end
 	if not isAiming() and not Settings.TriggerBotAlways then return nil end
 	local origin = getAimOrigin()
-	local camPos = Camera.CFrame.Position
 	local maxFov = Settings.TriggerFOV
 	local best, bestD = nil, math.huge
+	local needWall = Settings.TriggerVisible
+
 	for _, t in ipairs(getTargets("aim")) do
-		-- Testa Head, Torso, Root — o primeiro que estiver dentro do FOV
 		local parts = {
 			t.Model:FindFirstChild("Head"),
 			t.Model:FindFirstChild("UpperTorso"),
@@ -581,8 +606,7 @@ local function getTriggerTarget()
 				if on and sp.Z > 0 then
 					local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
 					if d <= maxFov and d < bestD then
-						local wallOK = not Settings.TriggerVisible or hasLineOfSight(part, t.Model)
-						if wallOK then
+						if not needWall or hasLineOfSight(part, t.Model) then
 							best, bestD = t, d
 							break
 						end
@@ -595,7 +619,6 @@ local function getTriggerTarget()
 end
 
 local function simulateClick()
-	-- Método 1: mouse1click
 	local mouse = LocalPlayer:GetMouse()
 	if mouse then
 		pcall(function()
@@ -609,7 +632,6 @@ local function simulateClick()
 				return
 			end
 		end)
-		-- VirtualInputManager
 		pcall(function()
 			VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
 			task.wait(0.005)
@@ -625,7 +647,6 @@ local function updateTriggerBot()
 		return
 	end
 	local now = os.clock()
-	-- Delay real mínimo: 1 frame (~0.016s)
 	local minDelay = math.max(Settings.TriggerDelay, 0.016)
 	if now - lastTriggerShot < minDelay then return end
 	local target = getTriggerTarget()
@@ -646,23 +667,12 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- LEGIT AIM v78 - MOUSEMOVEREL
+-- LEGIT AIM v79 (com wall check na seleção)
 --------------------------------------------------------------------
 local mousemoverelFn = nil
 if type(mousemoverel) == "function" then
 	mousemoverelFn = mousemoverel
 end
-
-local virtualMouseMove = nil
-pcall(function()
-	if VirtualInputManager then
-		virtualMouseMove = function(dx, dy)
-			-- VirtualInputManager não tem SendMouseMoveEvent em todas versões
-			-- Fallback: usa o mousemoverel mesmo
-			if mousemoverelFn then mousemoverelFn(dx, dy) end
-		end
-	end
-end)
 
 RunService.RenderStepped:Connect(function(dt)
 	if not (isLegit() and isAiming()) then
@@ -690,10 +700,11 @@ RunService.RenderStepped:Connect(function(dt)
 		fovCircle.Visible = false
 	end
 
-	-- Achar melhor alvo
+	-- Achar melhor alvo (com wall check)
 	local fovLimit = Settings.FOVEnabled and Settings.FOVRadius or math.huge
 	local best, bestDist = nil, fovLimit
 	local found = 0
+	local needWall = Settings.AimWallCheck
 
 	for _, t in ipairs(getTargets("aim")) do
 		local part = getBestPart(t.Model)
@@ -702,9 +713,11 @@ RunService.RenderStepped:Connect(function(dt)
 			if onScreen and sp.Z > 0 then
 				local d = (Vector2.new(sp.X, sp.Y) - aimOrigin).Magnitude
 				if d <= bestDist then
-					found = found + 1
-					best, bestDist = t, d
-					best.Part = part
+					if not needWall or hasLineOfSight(part, t.Model) then
+						found = found + 1
+						best, bestDist = t, d
+						best.Part = part
+					end
 				end
 			end
 		end
@@ -758,10 +771,6 @@ RunService.RenderStepped:Connect(function(dt)
 	local moved = false
 	if mousemoverelFn then
 		local ok = pcall(mousemoverelFn, moveX, moveY)
-		if ok then moved = true end
-	end
-	if not moved and virtualMouseMove then
-		local ok = pcall(virtualMouseMove, moveX, moveY)
 		if ok then moved = true end
 	end
 
@@ -1677,7 +1686,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v78"
+title.Text = "Test Toolkit v79"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2537,9 +2546,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v78 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v79 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v78 carregado com sucesso!")
+	print("[TestToolkit] v79 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2562,12 +2571,9 @@ UserInputService.InputBegan:Connect(function(input)
 		if Settings.AimMode == 1 then
 			aimActive = true
 		elseif Settings.AimMode == 2 then
-			-- TOGGLE REAL: aperta liga, aperta de novo desliga
 			aimActive = not aimActive
 			notify("Mira " .. (aimActive and "ativada" or "desativada"), aimActive and "on" or "off")
 		end
-	elseif matchesBind(input, Settings.SwitchKey) then
-		-- próximo alvo (só desativa se estiver ligado)
 	elseif matchesBind(input, Settings.NoclipKey) then
 		Settings.Noclip = not Settings.Noclip
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
@@ -2596,7 +2602,7 @@ end)
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
 hud.Position = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
-hud.Size = UDim2.fromOffset(700, 20)
+hud.Size = UDim2.fromOffset(900, 20)
 hud.BackgroundColor3 = Theme.Bg
 hud.BackgroundTransparency = 0.25
 hud.BorderSizePixel = 0
@@ -2643,6 +2649,7 @@ RunService.RenderStepped:Connect(function(dt)
 				parts[#parts + 1] = "🎯 " .. tostring(aimDebugFound or 0) .. " alvos"
 				parts[#parts + 1] = "alvo: " .. tostring(aimDebugTarget or "?")
 				parts[#parts + 1] = aimDebugMoved and "✔ moveu" or "✘ não moveu"
+				parts[#parts + 1] = Settings.AimWallCheck and "🧱 parede ON" or "🧱 parede OFF"
 			end
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
