@@ -1,10 +1,11 @@
 --[[
-    TestToolkit v96 (sem aimbot)
-    - Wall check + Team check + Trigger bot
-    - Sem watchdog, sem travar câmera
+    TestToolkit v97
+    - Wall check + Team check + Trigger bot (qualquer parte do corpo, delay 0)
+    - Aimbot (câmera lock) com FOV, smooth, LOS e team check
+    - Sem watchdog, sem travar câmera (fora do aimbot)
     - Fling Bots + Fling Player Safe + K1LAS1K
     - Touch Fling + Spectate
-    - ESP apenas Highlight
+    - ESP apenas Highlight (sem barra de vida)
 ]]
 
 local Players = game:GetService("Players")
@@ -28,7 +29,7 @@ local isMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- SETTINGS
 --------------------------------------------------------------------
 local Settings = {
-	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
+	ESP = true, Rainbow = true, ShowNames = true,
 	Wallhack = true, ESPMaxDist = 300, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
 	ESPBox = 1, Tracers = false, TracerOrigin = 1,
@@ -36,8 +37,12 @@ local Settings = {
 	TargetMode = 3,
 
 	TriggerBot = false, TriggerBotAlways = false,
-	TriggerFOV = 60, TriggerVisible = true, TriggerDelay = 0.03,
+	TriggerFOV = 60, TriggerVisible = true, TriggerDelay = 0,
 	TriggerKey = Enum.KeyCode.Q,
+
+	AimBot = false, AimBotAlways = false, AimBotVisible = true,
+	AimBotFOV = 80, AimBotSmooth = 0.45, AimBotPart = 1,
+	AimBotShowFOV = true, AimBotKey = Enum.KeyCode.E,
 
 	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
 	HitboxInvisible = false,
@@ -114,7 +119,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v96 carregando...")
+bootShow("TestToolkit v97 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -164,14 +169,6 @@ local function getRoot(model)
 	r = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
 	rootOf[model] = r
 	return r
-end
-
-local function getBestPart(model)
-	return model:FindFirstChild("Head")
-		or model:FindFirstChild("UpperTorso")
-		or model:FindFirstChild("Torso")
-		or model:FindFirstChild("HumanoidRootPart")
-		or model.PrimaryPart
 end
 
 local targetCache = {}
@@ -276,7 +273,7 @@ local function getAimOrigin()
 	return UserInputService:GetMouseLocation()
 end
 
--- Lista de todas as partes do corpo (R6 + R15) usadas pelo trigger bot
+-- Partes do corpo usadas pelo trigger bot (R6 + R15)
 local TRIGGER_BODY_PARTS = {
 	"Head",
 	"UpperTorso", "LowerTorso", "Torso",
@@ -300,10 +297,10 @@ local function getBodyParts(model)
 	return parts
 end
 
--- Checagem de time explícita (além do que o getTargets já faz)
+-- Team check explícito (além do getTargets)
 local function isEnemyTarget(t)
 	if not t then return false end
-	if not t.Player then return true end          -- NPC/bot
+	if not t.Player then return true end
 	if t.Player == LocalPlayer then return false end
 	return isEnemy(t.Model, t.Player)
 end
@@ -361,6 +358,16 @@ triggerFovCircle.BackgroundTransparency = 1
 triggerFovCircle.Parent = gui
 corner(triggerFovCircle, 9999)
 stroke(triggerFovCircle, Color3.fromRGB(255, 100, 100), 0.4, 1.5)
+
+-- Círculo do FOV do aimbot
+local aimFovCircle = Instance.new("Frame")
+aimFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+aimFovCircle.BackgroundTransparency = 1
+aimFovCircle.Visible = false
+aimFovCircle.ZIndex = 55
+aimFovCircle.Parent = gui
+corner(aimFovCircle, 9999)
+stroke(aimFovCircle, Color3.fromRGB(80, 255, 130), 0.35, 1.5)
 
 -- Toasts
 local toastHolder = Instance.new("Frame")
@@ -529,7 +536,6 @@ RunService.RenderStepped:Connect(function()
 	local best, bestD = nil, math.huge
 
 	for _, t in ipairs(getTargets("trigger")) do
-		-- Team check reforçado
 		if isEnemyTarget(t) then
 			local parts = getBodyParts(t.Model)
 			for i = 1, #parts do
@@ -552,11 +558,11 @@ RunService.RenderStepped:Connect(function()
 	if not best then return end
 
 	triggerTargetName = best.Player and best.Player.DisplayName or best.Model.Name
-    local now = os.clock()
-    if Settings.TriggerDelay > 0 and (now - lastTriggerShot) < Settings.TriggerDelay then
-      triggerBotActive = true
-      return
-  end
+	local now = os.clock()
+	if Settings.TriggerDelay > 0 and (now - lastTriggerShot) < Settings.TriggerDelay then
+		triggerBotActive = true
+		return
+	end
 
 	triggerBotActive = true
 	lastTriggerShot = now
@@ -571,6 +577,107 @@ RunService.RenderStepped:Connect(function()
 		local o = getAimOrigin()
 		triggerFovCircle.Position = UDim2.fromOffset(o.X, o.Y)
 		triggerFovCircle.Size = UDim2.fromOffset(math.max(Settings.TriggerFOV * 2, 4), math.max(Settings.TriggerFOV * 2, 4))
+	end
+end)
+
+--------------------------------------------------------------------
+-- AIMBOT (câmera lock)
+--------------------------------------------------------------------
+local aimHoldActive = false
+local aimTarget = nil
+local aimTargetName = "nenhum"
+
+local AIM_PART_NAMES = {
+	"Head", "UpperTorso", "Torso", "LowerTorso", "HumanoidRootPart"
+}
+
+local function isAimActive()
+	if not Settings.AimBot then return false end
+	if _G.TT_isMenuOpen and _G.TT_isMenuOpen() then return false end
+	if UserInputService:GetFocusedTextBox() then return false end
+	if Settings.Spectating then return false end
+	local hum = getLocalHumanoid()
+	if hum and hum.Health <= 0 then return false end
+	return Settings.AimBotAlways or aimHoldActive
+end
+
+local function getAimTargetPart(model, mode)
+	if mode == 1 then
+		return model:FindFirstChild("Head")
+	elseif mode == 2 then
+		return model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
+	else
+		local best, bestD = nil, math.huge
+		local camPos = Camera.CFrame.Position
+		for _, name in ipairs(AIM_PART_NAMES) do
+			local p = model:FindFirstChild(name)
+			if p and p:IsA("BasePart") then
+				local d = (p.Position - camPos).Magnitude
+				if d < bestD then best, bestD = p, d end
+			end
+		end
+		return best
+	end
+end
+
+local function findAimTarget()
+	local origin = getAimOrigin()
+	local fov = Settings.AimBotFOV
+	local best, bestD, bestPart = nil, math.huge, nil
+	for _, t in ipairs(getTargets("aimbot")) do
+		if isEnemyTarget(t) then
+			local part = getAimTargetPart(t.Model, Settings.AimBotPart)
+			if part and part.Parent then
+				local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+				if onScreen and sp.Z > 0 then
+					local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
+					if d <= fov and d < bestD then
+						if not Settings.AimBotVisible or hasLineOfSight(part, t.Model) then
+							best, bestD, bestPart = t, d, part
+						end
+					end
+				end
+			end
+		end
+	end
+	if best then best._aimPart = bestPart end
+	return best
+end
+
+RunService.RenderStepped:Connect(function(dt)
+	-- Círculo de FOV
+	local show = Settings.AimBot and Settings.AimBotShowFOV
+		and not (_G.TT_isMenuOpen and _G.TT_isMenuOpen())
+	aimFovCircle.Visible = show
+	if show then
+		local o = getAimOrigin()
+		aimFovCircle.Position = UDim2.fromOffset(o.X, o.Y)
+		local sz = math.max(Settings.AimBotFOV * 2, 4)
+		aimFovCircle.Size = UDim2.fromOffset(sz, sz)
+		local s = aimFovCircle:FindFirstChildOfClass("UIStroke")
+		if s then
+			s.Color = aimTarget and Color3.fromRGB(255, 70, 70) or Color3.fromRGB(80, 255, 130)
+		end
+	end
+
+	-- Lock de câmera
+	if not isAimActive() then
+		aimTarget, aimTargetName = nil, "nenhum"
+		return
+	end
+	local t = findAimTarget()
+	aimTarget = t
+	if not t or not t._aimPart or not t._aimPart.Parent then return end
+	aimTargetName = t.Player and t.Player.DisplayName or t.Model.Name
+
+	local camCF = Camera.CFrame
+	local goalCF = CFrame.new(camCF.Position, t._aimPart.Position)
+	local speed = math.clamp(Settings.AimBotSmooth, 0.01, 1)
+	if speed >= 0.999 then
+		Camera.CFrame = goalCF
+	else
+		local alpha = math.clamp(speed * dt * 60, 0, 1)
+		Camera.CFrame = camCF:Lerp(goalCF, alpha)
 	end
 end)
 
@@ -1423,15 +1530,6 @@ local function newEsp(model)
 	holder.ZIndex = 1
 	holder.Parent = espRoot
 	o.Holder = holder
-	o.HpBg = mkFrame(holder)
-	o.HpBg.BackgroundColor3 = Color3.new(0, 0, 0)
-	o.HpBg.BackgroundTransparency = 0.4
-	o.HpFill = Instance.new("Frame")
-	o.HpFill.AnchorPoint = Vector2.new(0, 1)
-	o.HpFill.Position = UDim2.fromScale(0, 1)
-	o.HpFill.BorderSizePixel = 0
-	o.HpFill.ZIndex = 1
-	o.HpFill.Parent = o.HpBg
 	o.Name = mkText(holder, 13)
 	o.Name.AnchorPoint = Vector2.new(0.5, 1)
 	o.Tracer = mkFrame(holder)
@@ -1482,17 +1580,6 @@ local function drawEsp(o, t, dist, now, vp)
 	local boxH = math.max(bot.Y - top.Y, 10)
 	local x, y = px(center.X), px(top.Y)
 	o.Holder.Visible = true
-	if Settings.ShowHealth then
-		local hum = t.Humanoid
-		local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-		o.HpBg.Visible = true
-		o.HpBg.Position = UDim2.fromOffset(x + 10, y)
-		o.HpBg.Size = UDim2.fromOffset(4, boxH)
-		o.HpFill.Size = UDim2.new(1, 0, frac, 0)
-		o.HpFill.BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.9, 1)
-	else
-		o.HpBg.Visible = false
-	end
 	if Settings.ShowNames then
 		local plr = t.Player
 		o.Name.Visible = true
@@ -1666,7 +1753,7 @@ local savedMouseBehavior = nil
 local savedMouseIcon = nil
 
 local function buildUI()
-local TAB_TOTAL = isMobile and 7 or 6
+local TAB_TOTAL = isMobile and 8 or 7
 
 local menu = Instance.new("CanvasGroup")
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1713,7 +1800,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v96"
+title.Text = "Test Toolkit v97"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2261,7 +2348,7 @@ local function addDropdown(text, key, desc, onChange)
 end
 
 --------------------------------------------------------------------
--- ABAS (aim removido)
+-- ABAS
 --------------------------------------------------------------------
 newPage("trigger", "Trigger")
 addSection("Trigger Bot")
@@ -2274,6 +2361,18 @@ addSection("Alvos")
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addSection("Tecla (PC)")
 addKeybind("Tecla do Trigger", "TriggerKey", "Segura para ativar")
+
+newPage("aim", "Aim")
+addSection("Aimbot (câmera)")
+addToggle("Aimbot", "AimBot", "Câmera gruda no player")
+addToggle("Sempre ativo", "AimBotAlways", "Não precisa segurar tecla")
+addToggle("Só visíveis", "AimBotVisible", "Respeita parede")
+addToggle("Mostrar FOV", "AimBotShowFOV", "Círculo verde/vermelho")
+addCycle("Parte do corpo", "AimBotPart", { "Cabeça", "Torso", "Mais perto" }, "Onde mirar")
+addSlider("FOV do aim", "AimBotFOV", 10, 400, 1, 0, "Raio em pixels")
+addSlider("Suavidade", "AimBotSmooth", 0.05, 1, 0.05, 2, "1 = instantâneo")
+addSection("Tecla (PC)")
+addKeybind("Tecla do aim", "AimBotKey", "Segura para mirar")
 
 newPage("hitbox", "Hitbox")
 addSection("Hitbox Expander")
@@ -2294,7 +2393,6 @@ addToggle("Ver através de paredes", "Wallhack", "Contorno atrás de objetos")
 addToggle("Contorno colorido", "ESPHighlight", "Mais pesado")
 addToggle("Cor arco-íris", "Rainbow", "Cor animada")
 addToggle("Nomes e distância", "ShowNames", "Texto acima")
-addToggle("Barra de vida", "ShowHealth", "Barra verde/vermelha")
 addToggle("Linhas", "Tracers", "Linha da tela")
 addCycle("Origem da linha", "TracerOrigin", { "Baixo", "Centro", "Cursor" }, "De onde sai")
 addSection("Limites")
@@ -2563,9 +2661,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v96 carregado (sem aimbot)  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v96 (sem aimbot) carregado com sucesso!")
+	print("[TestToolkit] v97 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2585,6 +2683,8 @@ UserInputService.InputBegan:Connect(function(input)
 	if rebinding then return end
 	if matchesBind(input, Settings.TriggerKey) then
 		triggerHoldActive = true
+	elseif matchesBind(input, Settings.AimBotKey) then
+		aimHoldActive = true
 	elseif matchesBind(input, Settings.NoclipKey) then
 		Settings.Noclip = not Settings.Noclip
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
@@ -2608,6 +2708,9 @@ end)
 UserInputService.InputEnded:Connect(function(input)
 	if matchesBind(input, Settings.TriggerKey) then
 		triggerHoldActive = false
+	end
+	if matchesBind(input, Settings.AimBotKey) then
+		aimHoldActive = false
 	end
 end)
 
@@ -2664,6 +2767,9 @@ RunService.RenderStepped:Connect(function(dt)
 			if Fling.flingActive then parts[#parts + 1] = "🔥 FLING" end
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
+			end
+			if Settings.AimBot and aimTarget then
+				parts[#parts + 1] = "🎯 " .. tostring(aimTargetName or "?")
 			end
 			if Settings.TouchFling then parts[#parts + 1] = "💥 TouchFling" end
 			if Settings.Spectating then parts[#parts + 1] = "👁 " .. tostring(Settings.SpectateTarget) end
