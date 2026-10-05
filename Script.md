@@ -1,8 +1,8 @@
 --[[
-    TestToolkit v76 - Blindado contra nil
-    Ctrl direito abre/fecha
-    Aimbot: só por tecla (padrão Q)
-    Correções: Fling Player, Invisibilidade, Botões Mobile, FOV, Bypass Vel/Pulo, Teclas N/F/I, Legit Aim real
+    TestToolkit v78
+    Ctrl direito abre/fecha | Q alterna mira
+    Aim via mousemoverel (Delta/Xeno universal)
+    Trigger instantâneo com detecção robusta
 ]]
 
 local Players = game:GetService("Players")
@@ -12,6 +12,7 @@ local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -25,34 +26,29 @@ local isMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- SETTINGS
 --------------------------------------------------------------------
 local Settings = {
-	-- ESP
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
 	Wallhack = true, ESPMaxDist = 600, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
 	ESPBox = 2, Tracers = false, TracerOrigin = 1,
 
-	-- Aim
 	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
-	AimMode = 2, AimPart = 3, AimWallCheck = true,
+	AimMode = 2, AimPart = 3, AimWallCheck = false,
 	Smoothness = 0.15, SnapAngle = 6, AutoPredict = true, PredictScale = 0.6,
 	AimAtCursor = true, Prediction = 0,
 	ShotType = 1, FireLock = true, Priority = 1,
 	AimKey = Enum.KeyCode.Q,
 	SwitchKey = Enum.KeyCode.E,
-	FOVEnabled = true, FOVRadius = 150, AimMaxDist = 0,
+	FOVEnabled = true, FOVRadius = 300, AimMaxDist = 0,
 	SilentAimFOV = 300, SilentAimVisible = true,
 
-	-- Trigger Bot
 	TriggerBot = false, TriggerBotAlways = false,
-	TriggerFOV = 100, TriggerVisible = true, TriggerDelay = 0.05,
+	TriggerFOV = 100, TriggerVisible = true, TriggerDelay = 0.01,
 
-	-- Hitbox
 	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
 	HitboxInvisible = false,
 	ExpandHead = true, ExpandTorso = true, ExpandUpperTorso = true, ExpandLowerTorso = false,
 
-	-- Movimento
 	WalkSpeedOn = false, WalkSpeed = 32,
 	JumpOn = false, JumpPower = 100,
 	Noclip = false, NoclipKey = Enum.KeyCode.N,
@@ -63,11 +59,9 @@ local Settings = {
 	InfJump = false, FullBright = false, NoFog = false,
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true,
 
-	-- Invisibilidade
 	SeatInvisible = false, SeatInvisibleKey = Enum.KeyCode.I,
 	SeatInvisibleX = -25.95, SeatInvisibleY = 84, SeatInvisibleZ = 3537.55,
 
-	-- Fling
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000,
 	FlingRepeat = 0.1,
@@ -120,7 +114,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v76 carregando...")
+bootShow("TestToolkit v78 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -166,6 +160,15 @@ local function getRoot(model)
 	r = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
 	rootOf[model] = r
 	return r
+end
+
+-- Pega QUALQUER parte do alvo (Head, Torso, Root — o que existir)
+local function getBestPart(model)
+	return model:FindFirstChild("Head")
+		or model:FindFirstChild("UpperTorso")
+		or model:FindFirstChild("Torso")
+		or model:FindFirstChild("HumanoidRootPart")
+		or model.PrimaryPart
 end
 
 local targetCache = {}
@@ -254,106 +257,12 @@ local function hasLineOfSight(part, model)
 end
 _G.TT_hasLOS = hasLineOfSight
 
-local sizeInfo = setmetatable({}, { __mode = "k" })
-local function isSmall(model)
-	local now = os.clock()
-	local info = sizeInfo[model]
-	if not info then info = { t = -1, small = false }; sizeInfo[model] = info end
-	if now - info.t > 0.5 then
-		local _, size = model:GetBoundingBox()
-		info.small = size.Y < 4.2
-		info.t = now
-	end
-	return info.small
-end
-
 local function getAimOrigin()
 	if isMobile then
 		local vp = Camera.ViewportSize
 		return Vector2.new(vp.X / 2, vp.Y / 2)
 	end
 	return UserInputService:GetMouseLocation()
-end
-
-local trackers = setmetatable({}, { __mode = "k" })
-
-local function pickAim(model, hum)
-	local root = getRoot(model)
-	local head = model:FindFirstChild("Head")
-	local torso = model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso") or root
-	local order
-	if Settings.AimPart == 1 then order = { head, torso, root }
-	elseif Settings.AimPart == 2 then order = { torso, root, head }
-	else
-		local tr = trackers[model]
-		local fast = tr ~= nil and tr.vel.Magnitude > 12
-		local headFirst = not (fast or isSmall(model) or hum.FloorMaterial == Enum.Material.Air)
-		if headFirst then order = { head, torso, root }
-		else order = { torso, root, head } end
-	end
-	local origin = getAimOrigin()
-	local best, bestD
-	for _, p in ipairs(order) do
-		if p and p:IsA("BasePart") and hasLineOfSight(p, model) then
-			if Settings.AimPart ~= 3 then return p end
-			local sp, on = Camera:WorldToViewportPoint(p.Position)
-			local d = on and (Vector2.new(sp.X, sp.Y) - origin).Magnitude or math.huge
-			if not bestD or d < bestD then best, bestD = p, d end
-		end
-	end
-	return best
-end
-
-local candCache, candTime = {}, -1
-
-local function candLess(a, b)
-	if Settings.Priority == 2 then return a.WorldDist < b.WorldDist end
-	return a.Dist < b.Dist
-end
-
-local function getCandidates(force, fovOverride)
-	local now = os.clock()
-	if not force and now - candTime < 0.1 then return candCache end
-	candTime = now
-	local origin = getAimOrigin()
-	local camPos = Camera.CFrame.Position
-	local fovOn = Settings.FOVEnabled
-	local fovLimit = fovOverride or Settings.FOVRadius
-	local maxD = Settings.AimMaxDist
-	local rough = {}
-	for _, t in ipairs(getTargets("aim")) do
-		local rp = t.Root.Position
-		local rsp, rOn = Camera:WorldToViewportPoint(rp)
-		if rOn then
-			local d2 = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-			local wd = (rp - camPos).Magnitude
-			if (not fovOn or d2 <= fovLimit) and (maxD == 0 or wd <= maxD) then
-				rough[#rough + 1] = { T = t, Dist = d2, WorldDist = wd, Health = t.Humanoid.Health }
-			end
-		end
-	end
-	table.sort(rough, candLess)
-	local out = {}
-	for i = 1, #rough do
-		if #out >= 6 then break end
-		local r = rough[i]
-		local part = pickAim(r.T.Model, r.T.Humanoid)
-		if part then
-			local sp, onScreen = Camera.WorldToViewportPoint(part.Position)
-			if onScreen then
-				local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
-				if not fovOn or d <= fovLimit then
-					out[#out + 1] = {
-						Model = r.T.Model, Humanoid = r.T.Humanoid, Player = r.T.Player,
-						Part = part, Dist = d, WorldDist = (part.Position - camPos).Magnitude,
-					}
-				end
-			end
-		end
-	end
-	table.sort(out, candLess)
-	candCache = out
-	return out
 end
 
 --------------------------------------------------------------------
@@ -565,13 +474,12 @@ end)
 -- AIM STATE
 --------------------------------------------------------------------
 local aimActive = false
-local currentTarget = nil
 local silentTarget = nil
 local silentActive = false
 local firing = false
--- CORREÇÃO: Variáveis para salvar o estado da câmera
-local aimCamSaved = false
-local aimCamOriginalType = nil
+local aimDebugFound = 0
+local aimDebugTarget = "nenhum"
+local aimDebugMoved = false
 
 UserInputService.InputBegan:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then firing = true end
@@ -583,64 +491,6 @@ end)
 local function isAiming() return Settings.AimEnabled and (aimActive or Settings.AimMode == 3) end
 local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
-
-local function switchTarget()
-	local c = getCandidates(true)
-	if #c == 0 then currentTarget = nil; return end
-	table.sort(c, function(a, b) return a.WorldDist < b.WorldDist end)
-	local idx = 0
-	if currentTarget then
-		for i, v in ipairs(c) do
-			if v.Model == currentTarget.Model then idx = i; break end
-		end
-	end
-	currentTarget = c[(idx % #c) + 1]
-end
-
-local function getVelocity(model, root)
-	local now = os.clock()
-	local tr = trackers[model]
-	local pos = root.Position
-	if not tr then
-		tr = { pos = pos, t = now, vel = root.AssemblyLinearVelocity, acc = Vector3.zero }
-		trackers[model] = tr
-		return tr.vel, tr.acc
-	end
-	local el = now - tr.t
-	if el >= 0.05 then
-		local raw = (pos - tr.pos) / el
-		if raw.Magnitude > 400 then
-			tr.vel = Vector3.zero
-		else
-			tr.vel = tr.vel:Lerp(raw, 0.6)
-		end
-		tr.pos = pos
-		tr.t = now
-	end
-	if tr.vel.Magnitude < 1 and root.AssemblyLinearVelocity.Magnitude > 3 then
-		return root.AssemblyLinearVelocity, Vector3.zero
-	end
-	return tr.vel, Vector3.zero
-end
-
-local pingAt, pingVal = -1, 0.05
-local function predictPosition(t, dt)
-	local model, hum, part = t.Model, t.Humanoid, t.Part
-	local root = getRoot(model)
-	local pos = part.Position
-	if not root then return pos end
-	local vel = getVelocity(model, root)
-	local hv = Vector3.new(vel.X, 0, vel.Z)
-	if hv.Magnitude < 1.5 then hv = Vector3.zero end
-	local time = Settings.Prediction
-	if os.clock() - pingAt > 0.5 then
-		pingAt = os.clock()
-		pingVal = LocalPlayer:GetNetworkPing()
-	end
-	if Settings.AutoPredict then time += pingVal * 0.5 * Settings.PredictScale end
-	time = math.clamp(time, 0, 0.6)
-	return pos + hv * time
-end
 
 -- SILENT AIM hook
 local silentHooked = false
@@ -691,9 +541,7 @@ local function updateSilentTarget()
 		end
 	end
 	if best and best.Model.Parent then
-		local head = best.Model:FindFirstChild("Head")
-		local torso = best.Model:FindFirstChild("UpperTorso") or best.Model:FindFirstChild("Torso")
-		local part = head or torso or best.Model:FindFirstChild("HumanoidRootPart")
+		local part = getBestPart(best.Model)
 		if part then
 			best.Part = part
 			silentTarget = best
@@ -705,9 +553,12 @@ local function updateSilentTarget()
 	silentActive = false
 end
 
--- TRIGGER BOT
+--------------------------------------------------------------------
+-- TRIGGER BOT v78 - INSTANTÂNEO
+--------------------------------------------------------------------
 local triggerBotActive = false
 local lastTriggerShot = 0
+local triggerTargetName = "nenhum"
 
 local function getTriggerTarget()
 	if not Settings.TriggerBot then return nil end
@@ -717,13 +568,25 @@ local function getTriggerTarget()
 	local maxFov = Settings.TriggerFOV
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(getTargets("aim")) do
-		local rsp, on = Camera:WorldToViewportPoint(t.Root.Position)
-		if on then
-			local d = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
-			local wd = (t.Root.Position - camPos).Magnitude
-			if d <= maxFov then
-				if not Settings.TriggerVisible or hasLineOfSight(t.Root, t.Model) then
-					if wd < bestD then best, bestD = t, wd end
+		-- Testa Head, Torso, Root — o primeiro que estiver dentro do FOV
+		local parts = {
+			t.Model:FindFirstChild("Head"),
+			t.Model:FindFirstChild("UpperTorso"),
+			t.Model:FindFirstChild("Torso"),
+			t.Root,
+		}
+		for _, part in ipairs(parts) do
+			if part and part:IsA("BasePart") then
+				local sp, on = Camera:WorldToViewportPoint(part.Position)
+				if on and sp.Z > 0 then
+					local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
+					if d <= maxFov and d < bestD then
+						local wallOK = not Settings.TriggerVisible or hasLineOfSight(part, t.Model)
+						if wallOK then
+							best, bestD = t, d
+							break
+						end
+					end
 				end
 			end
 		end
@@ -732,176 +595,180 @@ local function getTriggerTarget()
 end
 
 local function simulateClick()
+	-- Método 1: mouse1click
 	local mouse = LocalPlayer:GetMouse()
-	if not mouse then return end
-	pcall(function()
-		if mouse1click then mouse1click(); return end
-	end)
-	pcall(function()
-		local vim = game:GetService("VirtualInputManager")
-		if vim then
-			vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
-			task.wait(0.02)
-			vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 1)
-		end
-	end)
+	if mouse then
+		pcall(function()
+			if mouse1click then mouse1click() return end
+		end)
+		pcall(function()
+			if mouse1down and mouse1up then
+				mouse1down()
+				task.wait(0.01)
+				mouse1up()
+				return
+			end
+		end)
+		-- VirtualInputManager
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
+			task.wait(0.005)
+			VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 1)
+		end)
+	end
 end
 
 local function updateTriggerBot()
-	if not Settings.TriggerBot then triggerBotActive = false; return end
+	if not Settings.TriggerBot then
+		triggerBotActive = false
+		triggerTargetName = "nenhum"
+		return
+	end
 	local now = os.clock()
-	if now - lastTriggerShot < Settings.TriggerDelay then return end
+	-- Delay real mínimo: 1 frame (~0.016s)
+	local minDelay = math.max(Settings.TriggerDelay, 0.016)
+	if now - lastTriggerShot < minDelay then return end
 	local target = getTriggerTarget()
-	if not target then triggerBotActive = false; return end
+	if not target then
+		triggerBotActive = false
+		triggerTargetName = "nenhum"
+		return
+	end
 	triggerBotActive = true
+	triggerTargetName = target.Player and target.Player.DisplayName or target.Model.Name
 	lastTriggerShot = now
 	simulateClick()
 end
 
 RunService.RenderStepped:Connect(function()
-	pcall(function()
-		updateSilentTarget()
-		updateTriggerBot()
-	end)
+	pcall(updateSilentTarget)
+	pcall(updateTriggerBot)
 end)
 
--- LEGIT AIM (v76 - CORRIGIDO com Scriptable + toggle real)
-RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 10, function(dt)
-	local myRoot = getLocalRoot()
-	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
+--------------------------------------------------------------------
+-- LEGIT AIM v78 - MOUSEMOVEREL
+--------------------------------------------------------------------
+local mousemoverelFn = nil
+if type(mousemoverel) == "function" then
+	mousemoverelFn = mousemoverel
+end
+
+local virtualMouseMove = nil
+pcall(function()
+	if VirtualInputManager then
+		virtualMouseMove = function(dx, dy)
+			-- VirtualInputManager não tem SendMouseMoveEvent em todas versões
+			-- Fallback: usa o mousemoverel mesmo
+			if mousemoverelFn then mousemoverelFn(dx, dy) end
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+	if not (isLegit() and isAiming()) then
+		aimDebugFound = 0
+		aimDebugTarget = "nenhum"
+		aimDebugMoved = false
+		fovCircle.Visible = false
+		lockMarker.Visible = false
+		return
+	end
+
 	local aimOrigin
-	if isFirstPerson then
-		aimOrigin = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-	elseif isMobile then
+	if isMobile then
 		local vp = Camera.ViewportSize
 		aimOrigin = Vector2.new(vp.X / 2, vp.Y / 2)
 	else
 		aimOrigin = UserInputService:GetMouseLocation()
 	end
 
-	local showFov = Settings.FOVEnabled and Settings.AimEnabled and isLegit() and isAiming()
-	fovCircle.Visible = showFov
-	if showFov then
+	if Settings.FOVEnabled then
+		fovCircle.Visible = true
 		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
+	else
+		fovCircle.Visible = false
 	end
 
-	local didAim = false
+	-- Achar melhor alvo
+	local fovLimit = Settings.FOVEnabled and Settings.FOVRadius or math.huge
+	local best, bestDist = nil, fovLimit
+	local found = 0
 
-	if isLegit() and isAiming() then
-		-- Valida alvo atual
-		if currentTarget then
-			local m, hum = currentTarget.Model, currentTarget.Humanoid
-			if not m.Parent or not isAlive(hum) then
-				currentTarget = nil
-			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then
-				currentTarget = nil
-			end
-		end
-
-		-- Busca novo alvo
-		if not currentTarget then
-			local list = getCandidates(true)
-			if #list > 0 then currentTarget = list[1] end
-		end
-
-		-- Valida a parte
-		if currentTarget then
-			local part = currentTarget.Part
-			if not part or not part.Parent then currentTarget = nil end
-		end
-
-		-- Aplica a mira
-		if currentTarget and currentTarget.Part then
-			didAim = true
-
-			-- CORREÇÃO: Força a câmera a ficar Scriptable para o jogo não resetar
-			if not aimCamSaved then
-				aimCamOriginalType = Camera.CameraType
-				aimCamSaved = true
-			end
-			pcall(function()
-				if Camera.CameraType ~= Enum.CameraType.Scriptable then
-					Camera.CameraType = Enum.CameraType.Scriptable
+	for _, t in ipairs(getTargets("aim")) do
+		local part = getBestPart(t.Model)
+		if part then
+			local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+			if onScreen and sp.Z > 0 then
+				local d = (Vector2.new(sp.X, sp.Y) - aimOrigin).Magnitude
+				if d <= bestDist then
+					found = found + 1
+					best, bestDist = t, d
+					best.Part = part
 				end
-			end)
-
-			local goalPos = predictPosition(currentTarget, dt)
-			local camPos = Camera.CFrame.Position
-			local toGoal = goalPos - camPos
-
-			if toGoal.Magnitude > 0.1 then
-				local targetCF = CFrame.lookAt(camPos, goalPos)
-				local currentLook = Camera.CFrame.LookVector
-				local goalDir = toGoal.Unit
-				local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
-
-				local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
-				alpha = math.clamp(alpha, 0, 1)
-
-				if angle <= Settings.SnapAngle then alpha = 1 end
-				if firing and Settings.FireLock then alpha = 1 end
-
-				-- CORREÇÃO: se o ângulo for muito grande, snap direto
-				local newRotation
-				if angle > 45 and alpha < 0.5 then
-					newRotation = targetCF.Rotation
-				else
-					newRotation = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
-				end
-
-				local finalCF = CFrame.new(camPos) * newRotation
-				Camera.CFrame = finalCF
-				-- Também atualiza o Focus para o jogo não brigar
-				pcall(function()
-					Camera.Focus = CFrame.new(goalPos)
-				end)
-			end
-
-			-- Marcador visual
-			local sp, onScreen = Camera:WorldToViewportPoint(goalPos)
-			if onScreen then
-				lockMarker.Visible = true
-				lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
-				lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
-				lockMarker.Size = UDim2.fromOffset(20, 20)
-			else
-				lockMarker.Visible = false
 			end
 		end
 	end
 
-	-- CORREÇÃO: Restaura o tipo de câmera original quando não está mirando
-	if not didAim and aimCamSaved then
-		pcall(function()
-			Camera.CameraType = aimCamOriginalType or Enum.CameraType.Custom
-		end)
-		aimCamSaved = false
-		aimCamOriginalType = nil
-	end
+	aimDebugFound = found
+	aimDebugTarget = best and (best.Player and best.Player.DisplayName or best.Model.Name) or "nenhum"
 
-	if Settings.AimEnabled and isSilent() and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
-		local sp, onScreen = Camera.WorldToViewportPoint(silentTarget.Part.Position)
-		if onScreen then
-			lockMarker.Visible = true
-			lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
-			lockMarker.BackgroundColor3 = Color3.fromRGB(255, 100, 255)
-			lockMarker.Size = UDim2.fromOffset(20, 20)
-		end
-	end
-
-	if triggerBotActive then
-		lockMarker.Visible = true
-		lockMarker.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-	end
-
-	if not currentTarget
-		and not (silentActive and silentTarget and silentTarget.Part and silentTarget.Part.Parent)
-		and not triggerBotActive then
+	if not best or not best.Part then
+		aimDebugMoved = false
 		lockMarker.Visible = false
+		return
 	end
+
+	local sp, onScreen = Camera:WorldToViewportPoint(best.Part.Position)
+	if not onScreen then
+		aimDebugMoved = false
+		lockMarker.Visible = false
+		return
+	end
+
+	lockMarker.Visible = true
+	lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
+	lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
+	lockMarker.Size = UDim2.fromOffset(20, 20)
+
+	if isMobile then return end
+
+	local vp = Camera.ViewportSize
+	local cx, cy = vp.X / 2, vp.Y / 2
+	local dx = sp.X - cx
+	local dy = sp.Y - cy
+
+	local distToCenter = math.sqrt(dx * dx + dy * dy)
+	if distToCenter > Settings.FOVRadius * 1.5 then
+		aimDebugMoved = false
+		return
+	end
+
+	local smooth = math.clamp(Settings.Smoothness, 0.01, 0.95)
+	local factor = 1 - smooth
+	if firing and Settings.FireLock then factor = 1 end
+
+	local moveX = dx * factor
+	local moveY = dy * factor
+
+	local maxMove = 30
+	if math.abs(moveX) > maxMove then moveX = maxMove * (moveX > 0 and 1 or -1) end
+	if math.abs(moveY) > maxMove then moveY = maxMove * (moveY > 0 and 1 or -1) end
+
+	local moved = false
+	if mousemoverelFn then
+		local ok = pcall(mousemoverelFn, moveX, moveY)
+		if ok then moved = true end
+	end
+	if not moved and virtualMouseMove then
+		local ok = pcall(virtualMouseMove, moveX, moveY)
+		if ok then moved = true end
+	end
+
+	aimDebugMoved = moved
 end)
 
+-- FOV circles de silent e trigger
 RunService.RenderStepped:Connect(function()
 	local showSilentFov = Settings.AimEnabled and Settings.UseSilentAim and isAiming()
 	silentFovCircle.Visible = showSilentFov
@@ -1034,7 +901,7 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------
--- FLY estável
+-- FLY
 --------------------------------------------------------------------
 local flyBV = nil
 local flyBG = nil
@@ -1118,7 +985,7 @@ local function updateFly(hum, root, dt)
 end
 
 --------------------------------------------------------------------
--- ANTI FLING
+-- ANTI FLING / VOID
 --------------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
 	pcall(function()
@@ -1128,8 +995,7 @@ RunService.Heartbeat:Connect(function()
 		if not hum or not root or hum.Health <= 0 then return end
 		local v = root.AssemblyLinearVelocity
 		local horizontal = Vector3.new(v.X, 0, v.Z).Magnitude
-		local limit = Settings.AntiFlingSpeed
-		if horizontal > limit or v.Y > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
+		if horizontal > Settings.AntiFlingSpeed or v.Y > 80 or root.AssemblyAngularVelocity.Magnitude > 40 then
 			root.AssemblyLinearVelocity = Vector3.zero
 			root.AssemblyAngularVelocity = Vector3.zero
 			local state = hum:GetState()
@@ -1143,9 +1009,6 @@ RunService.Heartbeat:Connect(function()
 	end)
 end)
 
---------------------------------------------------------------------
--- ANTI VOID
---------------------------------------------------------------------
 local lastSafe = nil
 RunService.Heartbeat:Connect(function()
 	pcall(function()
@@ -1315,7 +1178,6 @@ RunService.Heartbeat:Connect(function(dt)
 		if not hum then return end
 		local root = getLocalRoot()
 
-		-- Bypass de Velocidade
 		if Settings.WalkSpeedOn then
 			if not wsActive then
 				defaultWalkSpeed = hum.WalkSpeed
@@ -1327,7 +1189,6 @@ RunService.Heartbeat:Connect(function(dt)
 			wsActive = false
 		end
 
-		-- Bypass de Pulo
 		if Settings.JumpOn then
 			if not jpActive then
 				defaultUseJumpPower = hum.UseJumpPower
@@ -1679,9 +1540,7 @@ local function updateEsp(now)
 end
 
 RunService.RenderStepped:Connect(function()
-	pcall(function()
-		updateEsp(os.clock())
-	end)
+	pcall(function() updateEsp(os.clock()) end)
 end)
 
 --------------------------------------------------------------------
@@ -1818,7 +1677,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v76"
+title.Text = "Test Toolkit v78"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2417,16 +2276,15 @@ addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
 addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente")
 addToggle("Silent Aim", "UseSilentAim", "Redireciona o tiro")
 addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" }, "Como ativa", function() aimActive = false end)
-addCycle("Parte do corpo", "AimPart", { "Cabeça", "Corpo", "Automático" }, "Parte alvo")
-addCycle("Prioridade", "Priority", { "Perto do cursor", "Perto de mim", "Menos vida" }, "Ordem")
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addToggle("Ignorar equipe", "TeamCheck", "Não mira aliados")
 addToggle("Checar parede", "AimWallCheck", "Só mira se enxergar")
 addSection("Legit Aim")
 addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mais rápida")
-addSlider("Ângulo de trava", "SnapAngle", 0, 30, 1, 0, "Cola abaixo deste")
 addToggle("Trava ao atirar", "FireLock", "Sem suavização ao atirar")
-addToggle("Mirar no cursor", "AimAtCursor", "PC: alvo sob o cursor")
+addSection("FOV do Legit")
+addToggle("Limitar pelo FOV", "FOVEnabled", "Só dentro do círculo")
+addSlider("Raio do FOV", "FOVRadius", 20, 600, 5, 0, "Pixels")
 addSection("Silent Aim")
 addSlider("FOV do Silent", "SilentAimFOV", 50, 800, 10, 0, "Raio")
 addToggle("Só visíveis", "SilentAimVisible", "Só atira com LOS")
@@ -2436,12 +2294,8 @@ addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar")
 addToggle("Só visíveis", "TriggerVisible", "Só atira com LOS")
 addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
 addSlider("Delay", "TriggerDelay", 0.01, 1, 0.01, 2, "Entre tiros")
-addSection("FOV do Legit")
-addToggle("Limitar pelo FOV", "FOVEnabled", "Só dentro do círculo")
-addSlider("Raio do FOV", "FOVRadius", 20, 600, 5, 0, "Pixels")
-addSlider("Distância máxima", "AimMaxDist", 0, 2000, 50, 0, "0 = sem limite")
 addSection("Teclas (PC)")
-addKeybind("Tecla da mira", "AimKey", "Ativa a mira")
+addKeybind("Tecla da mira", "AimKey", "Ativa/desativa a mira")
 addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
 
 newPage("hitbox", "Hitbox")
@@ -2531,16 +2385,16 @@ addSection("Proteção contra kick")
 addToggle("Anti AFK", "AntiAFK", "Evita kick")
 
 if isMobile then
-    newPage("buttons", "Botões")
-    addSection("Botões na tela")
-    addToggle("Botão MIRA", "ShowBtnAim", "")
-    addToggle("Botão VOO", "ShowBtnFly", "")
-    addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
-    addToggle("Botão ESP", "ShowBtnEsp", "")
-    addToggle("Botão FLING", "ShowBtnFling", "")
-    addSection("Aparência")
-    addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
-    addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
+	newPage("buttons", "Botões")
+	addSection("Botões na tela")
+	addToggle("Botão MIRA", "ShowBtnAim", "")
+	addToggle("Botão VOO", "ShowBtnFly", "")
+	addToggle("Botão NOCLIP", "ShowBtnNoclip", "")
+	addToggle("Botão ESP", "ShowBtnEsp", "")
+	addToggle("Botão FLING", "ShowBtnFling", "")
+	addSection("Aparência")
+	addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
+	addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 end
 
 --------------------------------------------------------------------
@@ -2683,9 +2537,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v76 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v78 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v76 carregado com sucesso!")
+	print("[TestToolkit] v78 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2705,15 +2559,15 @@ UserInputService.InputBegan:Connect(function(input)
 	if rebinding then return end
 
 	if matchesBind(input, Settings.AimKey) then
-		-- CORREÇÃO: toggle real do Q
 		if Settings.AimMode == 1 then
 			aimActive = true
 		elseif Settings.AimMode == 2 then
+			-- TOGGLE REAL: aperta liga, aperta de novo desliga
 			aimActive = not aimActive
 			notify("Mira " .. (aimActive and "ativada" or "desativada"), aimActive and "on" or "off")
 		end
 	elseif matchesBind(input, Settings.SwitchKey) then
-		if isAiming() then switchTarget() end
+		-- próximo alvo (só desativa se estiver ligado)
 	elseif matchesBind(input, Settings.NoclipKey) then
 		Settings.Noclip = not Settings.Noclip
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
@@ -2784,10 +2638,14 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
-			if Settings.TriggerBot then parts[#parts + 1] = "Trigger" end
 			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
 			if Settings.AimEnabled and (aimActive or Settings.AimMode == 3) then
-				parts[#parts + 1] = "🎯 MIRA"
+				parts[#parts + 1] = "🎯 " .. tostring(aimDebugFound or 0) .. " alvos"
+				parts[#parts + 1] = "alvo: " .. tostring(aimDebugTarget or "?")
+				parts[#parts + 1] = aimDebugMoved and "✔ moveu" or "✘ não moveu"
+			end
+			if Settings.TriggerBot and triggerBotActive then
+				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
 			end
 			hud.Text = table.concat(parts, "  •  ")
 		end
