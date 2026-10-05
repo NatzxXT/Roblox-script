@@ -1,13 +1,11 @@
 --[[
-    TestToolkit v93
-    - Mouse livre ao abrir o menu (funciona em jogos que travam o mouse)
-    - Modo Furtivo (bypass anti-cheat de The Rake e similares)
-    - Fling Bots corrigido (player teleportado pra fora)
-    - Fling Player Safe + K1LAS1K
-    - Botão PARAR FLING
-    - Touch Fling corrigido
+    TestToolkit v94
+    - Aimbot CORRIGIDO (Camera Scriptable + slerp estável, sem tela girando)
+    - Mouse livre ao abrir o menu
+    - Modo Furtivo (bypass anti-cheat)
+    - Fling Bots + Fling Player Safe + K1LAS1K
+    - Touch Fling + Spectate
     - Silent Aim via flick
-    - Wall check via câmera
     - ESP apenas Highlight
 ]]
 
@@ -33,14 +31,14 @@ local isMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 --------------------------------------------------------------------
 local Settings = {
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
-	Wallhack = true, ESPMaxDist = 600, ESPMaxTargets = 12,
+	Wallhack = true, ESPMaxDist = 300, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
 	ESPBox = 1, Tracers = false, TracerOrigin = 1,
 
 	TargetMode = 3,
 	AimEnabled = true, UseLegitAim = true, UseSilentAim = false,
 	AimMode = 2, AimPart = 3, AimWallCheck = true,
-	Smoothness = 0.15, SnapAngle = 6, AutoPredict = true, PredictScale = 0.6,
+	Smoothness = 0.35, SnapAngle = 3, AutoPredict = true, PredictScale = 0.6,
 	AimAtCursor = true, Prediction = 0,
 	ShotType = 1, FireLock = true, Priority = 1,
 	AimKey = Enum.KeyCode.Q,
@@ -57,7 +55,6 @@ local Settings = {
 
 	WalkSpeedOn = false, WalkSpeed = 32,
 	JumpOn = false, JumpPower = 100,
-
 	StealthMode = false,
 	StealthSpeed = 28,
 
@@ -129,7 +126,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v93 carregando...")
+bootShow("TestToolkit v94 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -259,22 +256,18 @@ local function hasLineOfSight(part, model)
 	if not LocalPlayer.Character then return false end
 
 	local origin = Camera.CFrame.Position
-
 	table.clear(filterList)
 	filterList[1] = LocalPlayer.Character
 	filterList[2] = Camera
 	rayParams.FilterDescendantsInstances = filterList
 
 	local dir = part.Position - origin
-
 	for _ = 1, 8 do
 		local result = Workspace:Raycast(origin, dir, rayParams)
 		if not result then return true end
 		local hit = result.Instance
 		if not hit then return true end
-
 		if hit:IsDescendantOf(model) then return true end
-
 		if isIgnorableBlocker(hit) then
 			filterList[#filterList + 1] = hit
 			rayParams.FilterDescendantsInstances = filterList
@@ -504,6 +497,7 @@ end)
 -- AIM STATE
 --------------------------------------------------------------------
 local aimActive = false
+local currentTarget = nil
 local silentTarget = nil
 local silentActive = false
 local firing = false
@@ -709,108 +703,110 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- LEGIT AIM
+-- LEGIT AIM v94 — Scriptable forçado + slerp estável
 --------------------------------------------------------------------
-RunService.RenderStepped:Connect(function(dt)
-	if not (isLegit() and isAiming()) then
-		aimDebugFound = 0
-		aimDebugTarget = "nenhum"
-		aimDebugMoved = false
-		fovCircle.Visible = false
-		lockMarker.Visible = false
-		return
-	end
+local aimCameraSaved = false
+local aimOriginalCameraType = nil
+local aimOriginalCameraSubject = nil
 
+RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
+	local myRoot = getLocalRoot()
+	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
 	local aimOrigin
-	if isMobile then
+	if isFirstPerson then
+		aimOrigin = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	elseif isMobile then
 		local vp = Camera.ViewportSize
 		aimOrigin = Vector2.new(vp.X / 2, vp.Y / 2)
 	else
 		aimOrigin = UserInputService:GetMouseLocation()
 	end
 
-	if Settings.FOVEnabled then
-		fovCircle.Visible = true
+	local showFov = Settings.FOVEnabled and Settings.AimEnabled and isLegit() and isAiming()
+	fovCircle.Visible = showFov
+	if showFov then
 		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
 		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
-	else
-		fovCircle.Visible = false
 	end
 
-	local fovLimit = Settings.FOVEnabled and Settings.FOVRadius or math.huge
-	local best, bestDist = nil, fovLimit
-	local found = 0
-	local needWall = Settings.AimWallCheck
-
-	for _, t in ipairs(getTargets("aim")) do
-		local part = getBestPart(t.Model)
-		if part then
-			local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
-			if onScreen and sp.Z > 0 then
-				local d = (Vector2.new(sp.X, sp.Y) - aimOrigin).Magnitude
-				if d <= bestDist then
-					if not needWall or hasLineOfSight(part, t.Model) then
-						found = found + 1
-						best, bestDist = t, d
-						best.Part = part
-					end
+	-- Se NÃO está mirando, restaura a câmera original
+	if not (isLegit() and isAiming()) then
+		if aimCameraSaved then
+			pcall(function()
+				Camera.CameraType = aimOriginalCameraType or Enum.CameraType.Custom
+				if aimOriginalCameraSubject then
+					Camera.CameraSubject = aimOriginalCameraSubject
 				end
+			end)
+			aimCameraSaved = false
+			aimOriginalCameraType = nil
+			aimOriginalCameraSubject = nil
+		end
+		lockMarker.Visible = false
+		aimDebugFound = 0
+		aimDebugTarget = "nenhum"
+		aimDebugMoved = false
+		return
+	end
+
+	-- Força Scriptable para o jogo não brigar com a gente
+	if not aimCameraSaved then
+		aimOriginalCameraType = Camera.CameraType
+		aimOriginalCameraSubject = Camera.CameraSubject
+		aimCameraSaved = true
+	end
+	pcall(function()
+		if Camera.CameraType ~= Enum.CameraType.Scriptable then
+			Camera.CameraType = Enum.CameraType.Scriptable
+		end
+	end)
+
+	-- Acha alvo
+	if currentTarget then
+		local m, hum = currentTarget.Model, currentTarget.Humanoid
+		if not m.Parent or not isAlive(hum) then currentTarget = nil
+		elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
+	end
+	if not currentTarget then
+		currentTarget = getCandidates()[1]
+	end
+	if currentTarget then
+		local part = currentTarget.Part
+		if not part or not part.Parent then currentTarget = nil end
+	end
+
+	if currentTarget and currentTarget.Part then
+		local goalPos = predictPosition(currentTarget, dt)
+		local camPos = Camera.CFrame.Position
+		local toGoal = goalPos - camPos
+
+		if toGoal.Magnitude > 0.5 then
+			local targetCF = CFrame.lookAt(camPos, goalPos)
+			local currentLook = Camera.CFrame.LookVector
+			local goalDir = toGoal.Unit
+			local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
+
+			local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
+			alpha = math.clamp(alpha, 0.01, 1)
+
+			if angle <= Settings.SnapAngle then alpha = 1 end
+			if firing and Settings.FireLock then alpha = 1 end
+
+			-- Só aplica se o ângulo for maior que 0.3° (evita tremida infinita)
+			if angle > 0.3 then
+				local newRot = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
+				Camera.CFrame = CFrame.new(camPos) * newRot
 			end
 		end
+
+		local sp, onScreen = Camera:WorldToViewportPoint(goalPos)
+		lockMarker.Visible = onScreen
+		if onScreen then
+			lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
+			lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
+			lockMarker.Size = UDim2.fromOffset(20, 20)
+		end
 	end
-
-	aimDebugFound = found
-	aimDebugTarget = best and (best.Player and best.Player.DisplayName or best.Model.Name) or "nenhum"
-
-	if not best or not best.Part then
-		aimDebugMoved = false
-		lockMarker.Visible = false
-		return
-	end
-
-	local sp, onScreen = Camera:WorldToViewportPoint(best.Part.Position)
-	if not onScreen then
-		aimDebugMoved = false
-		lockMarker.Visible = false
-		return
-	end
-
-	lockMarker.Visible = true
-	lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
-	lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
-	lockMarker.Size = UDim2.fromOffset(20, 20)
-
-	if isMobile then return end
-
-	local vp = Camera.ViewportSize
-	local cx, cy = vp.X / 2, vp.Y / 2
-	local dx = sp.X - cx
-	local dy = sp.Y - cy
-
-	local distToCenter = math.sqrt(dx * dx + dy * dy)
-	if distToCenter > Settings.FOVRadius * 1.5 then
-		aimDebugMoved = false
-		return
-	end
-
-	local smooth = math.clamp(Settings.Smoothness, 0.01, 0.95)
-	local factor = 1 - smooth
-	if firing and Settings.FireLock then factor = 1 end
-
-	local moveX = dx * factor
-	local moveY = dy * factor
-
-	local maxMove = 30
-	if math.abs(moveX) > maxMove then moveX = maxMove * (moveX > 0 and 1 or -1) end
-	if math.abs(moveY) > maxMove then moveY = maxMove * (moveY > 0 and 1 or -1) end
-
-	local moved = false
-	if mousemoverelFn then
-		local ok = pcall(mousemoverelFn, moveX, moveY)
-		if ok then moved = true end
-	end
-
-	aimDebugMoved = moved
 end)
 
 -- FOV circles
@@ -1200,7 +1196,6 @@ do
 		if dir.Magnitude < 0.5 then
 			dir = -myRoot.CFrame.LookVector
 		end
-
 		local flatDir = Vector3.new(dir.X, 0, dir.Z)
 		if flatDir.Magnitude < 0.1 then
 			flatDir = -myRoot.CFrame.LookVector
@@ -1245,24 +1240,20 @@ do
 			while os.clock() < endTime do
 				if not hrp.Parent or not hum.Parent then break end
 				if hum.Health <= 0 then break end
-
 				pcall(function()
 					hrp.Velocity = velocity
 					hrp.RotVelocity = Vector3.new(9e6, 9e6, 9e6)
 					bv.Velocity = velocity
 					bav.AngularVelocity = Vector3.new(9e6, 9e6, 9e6)
 				end)
-
 				RunService.Heartbeat:Wait()
 			end
-
 			pcall(function()
 				if bv.Parent then bv:Destroy() end
 				if bav.Parent then bav:Destroy() end
 				for part, col in pairs(savedCol) do
 					if part.Parent then part.CanCollide = col end
 				end
-
 				if myRoot and myRoot.Parent then
 					myRoot.CFrame = savedCF
 					myRoot.AssemblyLinearVelocity = savedVel
@@ -1270,7 +1261,6 @@ do
 				end
 			end)
 		end)
-
 		return true
 	end
 
@@ -1278,7 +1268,6 @@ do
 
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
-
 		local Character = LocalPlayer.Character
 		if not Character then return false end
 		local Humanoid = Character:FindFirstChildOfClass("Humanoid")
@@ -1298,7 +1287,6 @@ do
 		if not THumanoid then return false end
 		local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
 		if not TRootPart then return false end
-
 		if THumanoid.Health <= 0 then return false end
 
 		Fling.flingOriginalCFrame = RootPart.CFrame
@@ -1325,34 +1313,28 @@ do
 			elseif TCharacter:FindFirstChild("Head") then
 				SFBasePart(TCharacter:FindFirstChild("Head"), RootPart, Character, Humanoid)
 			end
-
 			if Fling.flingActive then
 				Fling.flingActive = false
 				FlingActive = false
-
 				pcall(function()
 					if BV.Parent then BV:Destroy() end
 					workspace.FallenPartsDestroyHeight = oldFPDH
-
 					if RootPart and RootPart.Parent and Fling.flingOriginalCFrame then
 						RootPart.CFrame = Fling.flingOriginalCFrame
 						RootPart.Velocity = Vector3.zero
 						RootPart.RotVelocity = Vector3.zero
 					end
-
 					if Humanoid and Humanoid.Parent then
 						Humanoid.PlatformStand = false
 						Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
 						Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 					end
 				end)
-
 				Fling.flingOriginalCFrame = nil
 				Fling.flingOldFPDH = nil
 				Fling.flingBV = nil
 			end
 		end)
-
 		return true
 	end
 
@@ -1360,7 +1342,6 @@ do
 
 	Fling.doFlingPlayerSafe = function(target)
 		if not target or target == LocalPlayer then return false end
-
 		local TCharacter
 		if typeof(target) == "Instance" and target:IsA("Model") then
 			TCharacter = target
@@ -1368,7 +1349,6 @@ do
 			TCharacter = target.Character
 		end
 		if not TCharacter then return false end
-
 		local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
 		if not THumanoid or THumanoid.Health <= 0 then return false end
 		local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
@@ -1399,17 +1379,14 @@ do
 			while os.clock() < endTime do
 				if not TRootPart.Parent or not THumanoid.Parent then break end
 				if THumanoid.Health <= 0 then break end
-
 				TRootPart.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
 				TRootPart.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
 				pcall(function()
 					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
 					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
 				end)
-
 				RunService.Heartbeat:Wait()
 			end
-
 			pcall(function()
 				if bv.Parent then bv:Destroy() end
 				if bav.Parent then bav:Destroy() end
@@ -1418,7 +1395,6 @@ do
 				end
 			end)
 		end)
-
 		return true
 	end
 
@@ -1549,24 +1525,20 @@ do
 			while os.clock() < endTime do
 				if not targetRoot.Parent or not THumanoid.Parent then break end
 				if THumanoid.Health <= 0 then break end
-
 				targetRoot.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
 				targetRoot.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
 				pcall(function()
 					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
 					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
 				end)
-
 				RunService.Heartbeat:Wait()
 			end
-
 			pcall(function()
 				if bv.Parent then bv:Destroy() end
 				if bav.Parent then bav:Destroy() end
 				for part, col in pairs(savedCol) do
 					if part.Parent then part.CanCollide = col end
 				end
-
 				if myRoot2 and myRoot2.Parent and savedMyCF then
 					myRoot2.CFrame = savedMyCF
 					myRoot2.AssemblyLinearVelocity = savedMyVel or Vector3.zero
@@ -1574,7 +1546,6 @@ do
 				end
 			end)
 		end)
-
 		return true
 	end
 
@@ -1582,10 +1553,8 @@ do
 		if not Settings.TouchFling then return end
 		local myRoot = getLocalRoot()
 		if not myRoot or not myRoot.Parent then return end
-
 		local myPos = myRoot.Position
 		local range = Settings.TouchFlingRange
-
 		for model, hum in pairs(humanoids) do
 			if canFling(model) and hum.Health > 0 then
 				local theirRoot = getRoot(model)
@@ -1622,18 +1591,15 @@ do
 
 	Spectate.start = function(plr)
 		if not plr or plr == LocalPlayer then return false end
-
 		if not savedState then
 			originalSubject = Camera.CameraSubject
 			originalType = Camera.CameraType
 			savedState = true
 		end
-
 		local char = plr.Character
 		if not char then return false end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum then return false end
-
 		Camera.CameraType = Enum.CameraType.Custom
 		Camera.CameraSubject = hum
 		currentTarget = plr
@@ -1803,13 +1769,21 @@ local function litApply()
 	end
 end
 
-RunService.Heartbeat:Connect(function(dt)
+-- Força FullBright/NoFog todo frame (contra reset do anti-cheat)
+RunService.RenderStepped:Connect(function()
 	pcall(function()
-		litAcc += dt
-		if litAcc < 0.5 then return end
-		litAcc = 0
-		if Settings.FullBright or Settings.NoFog or litSaved.FullBright or litSaved.NoFog then
-			litApply()
+		if Settings.FullBright then
+			Lit.Brightness = 2
+			Lit.ClockTime = 14
+			Lit.GlobalShadows = false
+			Lit.Ambient = Color3.fromRGB(200, 200, 200)
+			Lit.OutdoorAmbient = Color3.fromRGB(200, 200, 200)
+			Lit.FogEnd = 1e9
+			Lit.FogStart = 1e9
+		end
+		if Settings.NoFog then
+			Lit.FogStart = 1e9
+			Lit.FogEnd = 1e9
 		end
 	end)
 end)
@@ -2189,7 +2163,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v93"
+title.Text = "Test Toolkit v94"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -3082,7 +3056,6 @@ local function setMenu(open)
 		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
 		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
 
-		-- Destrava o mouse
 		pcall(function()
 			savedMouseBehavior = UserInputService.MouseBehavior
 			savedMouseIcon = UserInputService.MouseIconEnabled
@@ -3096,7 +3069,6 @@ local function setMenu(open)
 			if not menuOpen then menu.Visible = false end
 		end)
 
-		-- Restaura o estado do mouse
 		pcall(function()
 			if savedMouseBehavior then
 				UserInputService.MouseBehavior = savedMouseBehavior
@@ -3112,7 +3084,6 @@ end
 _G.TT_setMenu = setMenu
 _G.TT_isMenuOpen = function() return menuOpen end
 
--- FORÇA mouse livre a cada frame enquanto o menu está aberto
 RunService.RenderStepped:Connect(function()
 	if menuOpen then
 		pcall(function()
@@ -3158,9 +3129,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v93 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v94 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v93 carregado com sucesso!")
+	print("[TestToolkit] v94 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
