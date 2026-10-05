@@ -1,11 +1,11 @@
 --[[
-    TestToolkit v97
-    - Wall check + Team check + Trigger bot (qualquer parte do corpo, delay 0)
+    TestToolkit v97.1
+    - Trigger bot (qualquer parte do corpo, delay 0, team check)
     - Aimbot (câmera lock) com FOV, smooth, LOS e team check
-    - Sem watchdog, sem travar câmera (fora do aimbot)
+    - ESP apenas Highlight (sem barra de vida)
+    - Mouse fix: não trava cursor ao fechar o menu
     - Fling Bots + Fling Player Safe + K1LAS1K
     - Touch Fling + Spectate
-    - ESP apenas Highlight (sem barra de vida)
 ]]
 
 local Players = game:GetService("Players")
@@ -119,7 +119,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97 carregando...")
+bootShow("TestToolkit v97.1 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -1749,8 +1749,6 @@ end
 local menuOpen = false
 local refreshers = {}
 local uiRefresh = function() end
-local savedMouseBehavior = nil
-local savedMouseIcon = nil
 
 local function buildUI()
 local TAB_TOTAL = isMobile and 8 or 7
@@ -1800,7 +1798,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97"
+title.Text = "Test Toolkit v97.1"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2598,6 +2596,9 @@ local function baseScale()
 	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
 end
 
+-- ============================================================
+-- MOUSE FIX: não salva/restaura MouseBehavior (evita travar cursor)
+-- ============================================================
 local function setMenu(open)
 	menuOpen = open
 	local s = baseScale()
@@ -2606,9 +2607,8 @@ local function setMenu(open)
 		menuScale.Scale = s * 0.94
 		tween(menu, { GroupTransparency = Settings.MenuAlpha }, 0.2)
 		tween(menuScale, { Scale = s }, 0.26, Enum.EasingStyle.Back)
+		-- Só força cursor visível enquanto o menu está aberto
 		pcall(function()
-			savedMouseBehavior = UserInputService.MouseBehavior
-			savedMouseIcon = UserInputService.MouseIconEnabled
 			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 			UserInputService.MouseIconEnabled = true
 		end)
@@ -2616,12 +2616,7 @@ local function setMenu(open)
 		tween(menu, { GroupTransparency = 1 }, 0.16)
 		tween(menuScale, { Scale = s * 0.94 }, 0.16)
 		task.delay(0.18, function() if not menuOpen then menu.Visible = false end end)
-		pcall(function()
-			if savedMouseBehavior then UserInputService.MouseBehavior = savedMouseBehavior end
-			if savedMouseIcon ~= nil then UserInputService.MouseIconEnabled = savedMouseIcon end
-			savedMouseBehavior = nil
-			savedMouseIcon = nil
-		end)
+		-- NÃO restaura MouseBehavior — deixa o jogo retomar o controle sozinho.
 	end
 end
 _G.TT_setMenu = setMenu
@@ -2630,12 +2625,8 @@ _G.TT_isMenuOpen = function() return menuOpen end
 RunService.RenderStepped:Connect(function()
 	if menuOpen then
 		pcall(function()
-			if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
-				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-			end
-			if not UserInputService.MouseIconEnabled then
-				UserInputService.MouseIconEnabled = true
-			end
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			UserInputService.MouseIconEnabled = true
 		end)
 	end
 end)
@@ -2661,9 +2652,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.1 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97 carregado com sucesso!")
+	print("[TestToolkit] v97.1 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
