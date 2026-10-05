@@ -1,6 +1,11 @@
 --[[
-    TestToolkit v67 - UNIVERSAL (funciona em qualquer jogo)
+    TestToolkit v68 - UNIVERSAL (funciona em qualquer jogo)
     Abrir/fechar: CTRL DIREITO (PC) ou botão TT (mobile)
+    Novidades v68:
+      - Fling Player com dropdown + botão
+      - Aba de Keybinds rebindable (só PC)
+      - Botão "Fling Player (Alvo da mira)"
+      - Duração e força do giro configuráveis
 ]]
 
 local Players = game:GetService("Players")
@@ -57,7 +62,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit Universal carregando...")
+bootShow("TestToolkit v68 carregando...")
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -82,16 +87,9 @@ local Settings = {
 	TriggerBot = false, TriggerBotAlways = false,
 	TriggerFOV = 100, TriggerVisible = true, TriggerDelay = 0.05,
 
-	HitboxExpander = false,
-	HitboxSize = 6,
-	HitboxRange = 200,
-	HitboxInvisible = false,
-	HitboxWallCheck = false,
-	HitboxIgnoreAllies = true,
-	ExpandHead = true,
-	ExpandTorso = true,
-	ExpandUpperTorso = true,
-	ExpandLowerTorso = false,
+	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
+	HitboxInvisible = false, HitboxWallCheck = false, HitboxIgnoreAllies = true,
+	ExpandHead = true, ExpandTorso = true, ExpandUpperTorso = true, ExpandLowerTorso = false,
 
 	WalkSpeedOn = false, WalkSpeed = 32, WalkAutoLimit = true,
 	JumpOn = false, JumpPower = 100,
@@ -111,8 +109,14 @@ local Settings = {
 
 	Fling = false, FlingKey = Enum.KeyCode.G,
 	FlingRange = 12, FlingPower = 3000, FlingMode = 1, FlingMode2 = 2,
-	FlingBots = true, FlingPlayers = false, FlingRepeat = 0.1,
-	FlingPlayerMode = 1, FlingPlayerRange = 50,
+	FlingBots = true, FlingRepeat = 0.1,
+
+	FlingTargetPlayer = "Nenhum",
+	FlingPlayerDuration = 2.5,
+	FlingPlayerSpin = 90000,
+	FlingPlayerKey = Enum.KeyCode.B,
+
+	MENU_KEY = Enum.KeyCode.RightControl,
 
 	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1, DeviceMode = 1,
@@ -125,8 +129,6 @@ local Settings = {
 }
 _G.TT_Settings = Settings
 
-local MENU_KEY = Enum.KeyCode.RightControl
-
 --------------------------------------------------------------------
 -- CONFIG
 --------------------------------------------------------------------
@@ -134,7 +136,7 @@ local CONFIG_FILE = "TestToolkit_config.json"
 local CONFIG_SKIP = {
 	DeviceMode = true, MobileEdit = true, HUDEdit = true,
 	Fly = true, Noclip = true, Fling = true, HitboxExpander = true,
-	SeatInvisible = true,
+	SeatInvisible = true, MENU_KEY = true, FlingPlayerKey = true,
 }
 
 local function serializeSettings()
@@ -142,7 +144,7 @@ local function serializeSettings()
 	for k, v in pairs(Settings) do
 		if not CONFIG_SKIP[k] then
 			local t = typeof(v)
-			if t == "boolean" or t == "number" then
+			if t == "boolean" or t == "number" or t == "string" then
 				data[k] = v
 			elseif t == "EnumItem" then
 				data[k] = { tostring(v.EnumType), v.Name }
@@ -160,7 +162,7 @@ local function applySavedConfig(data)
 		local cur = Settings[k]
 		if cur ~= nil and not CONFIG_SKIP[k] then
 			local t = typeof(cur)
-			if (t == "boolean" or t == "number") and typeof(v) == t then
+			if (t == "boolean" or t == "number" or t == "string") and typeof(v) == t then
 				Settings[k] = v
 			elseif t == "EnumItem" and type(v) == "table" and #v == 2 then
 				local ok, item = pcall(function() return Enum[v[1]][v[2]] end)
@@ -386,6 +388,13 @@ local function getTargets(purpose)
 	return list
 end
 
+_G.TT_getTargets = getTargets
+_G.TT_getRoot = getRoot
+_G.TT_isAlive = isAlive
+_G.TT_humanoids = humanoids
+_G.TT_isTeammate = isTeammate
+_G.TT_manualAllies = manualAllies
+
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 local filterList = {}
@@ -417,6 +426,7 @@ local function hasLineOfSight(part, model)
 	end
 	return false
 end
+_G.TT_hasLOS = hasLineOfSight
 
 local sizeInfo = setmetatable({}, { __mode = "k" })
 local function isSmall(model)
@@ -539,15 +549,6 @@ local function getCandidates(force)
 	candLock = false
 	return out
 end
-
--- Expor globais para o Script 2
-_G.TT_getTargets = getTargets
-_G.TT_getRoot = getRoot
-_G.TT_isAlive = isAlive
-_G.TT_humanoids = humanoids
-_G.TT_hasLOS = hasLineOfSight
-_G.TT_isTeammate = isTeammate
-_G.TT_manualAllies = manualAllies
 
 --------------------------------------------------------------------
 -- GUI + TEMA
@@ -1637,7 +1638,7 @@ local function updateFly(hum, root, dt)
 	else
 		flyCur = goal
 	end
-	f.LV.VectorVelocity = dir * flyCur
+	f.LV.VectorVector = dir * flyCur
 	f.AO.CFrame = CFrame.lookAt(Vector3.zero, flatLook)
 end
 
@@ -1695,7 +1696,7 @@ local function walkGuard(hum, root, dt)
 end
 
 --------------------------------------------------------------------
--- FLING (Bots + Players)
+-- FLING (Bots + Players com dropdown)
 --------------------------------------------------------------------
 local Fling = {}
 do
@@ -1771,21 +1772,19 @@ do
 		return true
 	end
 
-	-- Fling Player universal (estilo Mario Hub)
 	local function doFlingPlayer(target)
+		if not target or target == LocalPlayer then return false end
 		local targetRoot = getRoot(target.Character)
 		local myRoot = getLocalRoot()
 		if not targetRoot or not myRoot then return false end
-		if _G.TT_MM2State and _G.TT_MM2State.ActionBusy then return false end
 
-		if _G.TT_MM2State then _G.TT_MM2State.ActionBusy = true; _G.TT_MM2State.BusySince = os.clock() end
+		-- Noclip temporário (sempre, não depende de MM2State)
 		local home = myRoot.CFrame
 		local spin = Instance.new("BodyAngularVelocity")
 		spin.MaxTorque = Vector3.one * math.huge
-		spin.AngularVelocity = Vector3.new(0, 9e4, 0)
+		spin.AngularVelocity = Vector3.new(0, Settings.FlingPlayerSpin or 9e4, 0)
 		spin.Parent = myRoot
 
-		-- Noclip temporário
 		local savedNoclip = {}
 		local char = LocalPlayer.Character
 		if char then
@@ -1797,8 +1796,9 @@ do
 			end
 		end
 
+		local duration = Settings.FlingPlayerDuration or 2.5
 		local started = os.clock()
-		while os.clock() - started < 2.5 do
+		while os.clock() - started < duration do
 			local currentTarget = getRoot(target.Character)
 			if not currentTarget or not myRoot.Parent then break end
 			myRoot.CFrame = currentTarget.CFrame
@@ -1814,7 +1814,6 @@ do
 		for part, canCollide in pairs(savedNoclip) do
 			if part.Parent then part.CanCollide = canCollide end
 		end
-		if _G.TT_MM2State then _G.TT_MM2State.ActionBusy = false end
 		return true
 	end
 
@@ -1855,8 +1854,34 @@ do
 
 	Fling.doFlingPlayer = doFlingPlayer
 
+	Fling.flingSelected = function()
+		local name = Settings.FlingTargetPlayer
+		if not name or name == "" or name == "Nenhum" then
+			notify("Fling: nenhum player selecionado", "off")
+			return
+		end
+		local target = nil
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr.DisplayName == name or plr.Name == name then
+				target = plr
+				break
+			end
+		end
+		if not target or target == LocalPlayer then
+			notify("Fling: player inválido", "off")
+			return
+		end
+		if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
+			notify("Fling: player sem personagem", "off")
+			return
+		end
+		task.spawn(function()
+			local ok = doFlingPlayer(target)
+			notify(ok and ("Fling: " .. target.DisplayName) or "Fling: falhou", ok and "on" or "off")
+		end)
+	end
+
 	Fling.step = function()
-		-- Bots
 		if Settings.Fling then
 			local now = os.clock()
 			local jitter = (math.random() - 0.5) * 0.04
@@ -1883,50 +1908,6 @@ do
 		elseif flingActive then
 			flingActive = false
 			restoreAllCollide()
-		end
-
-		-- Players
-		if Settings.FlingPlayers then
-			local now = os.clock()
-			local lastFP = (_G.TT_MM2State and _G.TT_MM2State.LastFlingPlayer) or 0
-			local busyFP = (_G.TT_MM2State and _G.TT_MM2State.FlingBusy) or false
-			if not busyFP and now - lastFP >= 0.5 then
-				if _G.TT_MM2State then
-					_G.TT_MM2State.LastFlingPlayer = now
-					_G.TT_MM2State.FlingBusy = true
-				end
-				task.spawn(function()
-					local myRoot = getLocalRoot()
-					if myRoot then
-						local targets = {}
-						local myPos = myRoot.Position
-						local mode = Settings.FlingPlayerMode
-						local range = Settings.FlingPlayerRange
-						if mode == 2 and currentTarget and currentTarget.Player then
-							targets = { currentTarget.Player }
-						else
-							for _, plr in ipairs(Players:GetPlayers()) do
-								if plr ~= LocalPlayer then
-									local r = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
-									if r and (r.Position - myPos).Magnitude <= range then
-										targets[#targets + 1] = plr
-									end
-								end
-							end
-							table.sort(targets, function(a, b)
-								local ra = a.Character and a.Character:FindFirstChild("HumanoidRootPart")
-								local rb = b.Character and b.Character:FindFirstChild("HumanoidRootPart")
-								return ra and rb and (ra.Position - myPos).Magnitude < (rb.Position - myPos).Magnitude
-							end)
-							if mode == 1 and #targets > 1 then targets = { targets[1] } end
-						end
-						for _, target in ipairs(targets) do
-							doFlingPlayer(target)
-						end
-					end
-					if _G.TT_MM2State then _G.TT_MM2State.FlingBusy = false end
-				end)
-			end
 		end
 	end
 
@@ -2398,26 +2379,12 @@ local function destroyEsp(model, o)
 	espObjs[model] = nil
 end
 
-_G.TT_espObjs = espObjs
-_G.TT_newEsp = newEsp
-_G.TT_mkText = mkText
-_G.TT_mkFrame = mkFrame
-_G.TT_hideEsp = hideEsp
-
 local function px(v) return math.floor(v + 0.5) end
-
--- Esta função será usada como fallback caso o Script 2 (MM2) não esteja carregado
-local function defaultColorFor(t, now)
-	if t.Teammate then return ALLY_COLOR end
-	if Settings.Rainbow then return Color3.fromHSV((now * 0.25) % 1, 0.85, 1) end
-	return Settings.ESPColor
-end
-
-_G.TT_drawEspOverride = nil -- Script 2 pode sobrescrever
 
 local function drawEsp(o, t, dist, now, vp)
 	local model = t.Model
-	local color = _G.TT_drawEspOverride and _G.TT_drawEspOverride(o, t, dist, now) or defaultColorFor(t, now)
+	local color = t.Teammate and ALLY_COLOR
+		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
 
 	if Settings.ESPHighlight then
 		local hl = o.HL
@@ -2491,15 +2458,10 @@ local function drawEsp(o, t, dist, now, vp)
 		o.HpBg.Visible = false
 	end
 
-	-- Nome (Script 2 pode sobrescrever via _G.TT_nameOverride)
-	local nameText = nil
-	if _G.TT_nameOverride then
-		nameText = _G.TT_nameOverride(t, dist)
-	end
-	if nameText or Settings.ShowNames then
+	if Settings.ShowNames then
 		local plr = t.Player
 		o.Name.Visible = true
-		o.Name.Text = nameText or ((plr and plr.DisplayName or model.Name) .. "  [" .. math.floor(dist) .. "m]")
+		o.Name.Text = (plr and plr.DisplayName or model.Name) .. "  [" .. math.floor(dist) .. "m]"
 		o.Name.TextColor3 = color
 		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
 		o.Name.ZIndex = 5
@@ -2608,16 +2570,13 @@ local function updateEsp(now)
 		end
 	end
 end
-_G.TT_updateEsp = updateEsp
 
 --------------------------------------------------------------------
 -- INTERFACE
 --------------------------------------------------------------------
-local refreshers = {}
-
 local function buildUI()
 
-local TAB_TOTAL = 8
+local TAB_TOTAL = 9
 
 local menu = Instance.new("CanvasGroup")
 menu.Name = "Menu"
@@ -2665,7 +2624,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit - Universal"
+title.Text = "Test Toolkit Universal"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2676,7 +2635,7 @@ subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 12
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
 subtitle.TextColor3 = Theme.SubText
-subtitle.Text = "Ctrl direito abre/fecha  •  arraste aqui para mover"
+subtitle.Text = "Ctrl direito abre/fecha  •  arraste aqui"
 subtitle.Parent = titleBar
 
 local closeBtn = Instance.new("TextButton")
@@ -2750,6 +2709,7 @@ local tabCount = 0
 local tabOrder = {}
 local tabSlot = {}
 local tabTotalNow = TAB_TOTAL
+local refreshers = {}
 
 local function selectTab(name, instant)
 	if activeTab == name then return end
@@ -2783,7 +2743,7 @@ end
 local function layoutTabs()
 	local vis = {}
 	for _, n in ipairs(tabOrder) do
-		if n ~= "buttons" or isMobile then
+		if (n ~= "buttons" or isMobile) and (n ~= "keys" or not isMobile) then
 			vis[#vis + 1] = n
 		end
 	end
@@ -3155,6 +3115,91 @@ local function addKeybind(text, key, desc, allowMouse)
 	end)
 end
 
+local function addDropdown(text, key, desc, onChange)
+	local row = newRow(desc and 42 or 36, "TextButton")
+	hover(row)
+	local l = rowLabel(row, "", desc, 30)
+	local arrow = Instance.new("TextLabel")
+	arrow.BackgroundTransparency = 1
+	arrow.AnchorPoint = Vector2.new(1, 0.5)
+	arrow.Position = UDim2.new(1, -12, 0.5, 0)
+	arrow.Size = UDim2.fromOffset(16, 16)
+	arrow.Font = Enum.Font.GothamBold
+	arrow.TextSize = 14
+	arrow.TextColor3 = Theme.Accent
+	arrow.Text = "▼"
+	arrow.Parent = row
+
+	local dropdownFrame = nil
+	local function getList()
+		local list = { "Nenhum" }
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer then list[#list + 1] = plr.DisplayName end
+		end
+		return list
+	end
+	local function closeDropdown()
+		if dropdownFrame then dropdownFrame:Destroy(); dropdownFrame = nil end
+	end
+	local function render()
+		l.Text = text .. ": " .. (Settings[key] or "Nenhum")
+	end
+	render()
+	local function openDropdown()
+		if dropdownFrame then closeDropdown(); return end
+		local list = getList()
+		local h = math.min(#list * 28, 240)
+		dropdownFrame = Instance.new("Frame")
+		dropdownFrame.Size = UDim2.new(1, -24, 0, h)
+		dropdownFrame.Position = UDim2.new(0, 12, 1, 4)
+		dropdownFrame.BackgroundColor3 = Theme.Bg
+		dropdownFrame.BorderSizePixel = 0
+		dropdownFrame.ZIndex = 100
+		dropdownFrame.Parent = row
+		corner(dropdownFrame, 8)
+		stroke(dropdownFrame, Theme.Accent, 0.5, 1)
+		local scroll = Instance.new("ScrollingFrame")
+		scroll.Size = UDim2.fromScale(1, 1)
+		scroll.BackgroundTransparency = 1
+		scroll.BorderSizePixel = 0
+		scroll.ScrollBarThickness = 3
+		scroll.ScrollBarImageColor3 = Theme.Accent
+		scroll.CanvasSize = UDim2.new(0, 0, 0, #list * 28)
+		scroll.Parent = dropdownFrame
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 0)
+		layout.Parent = scroll
+		for i, name in ipairs(list) do
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -8, 0, 26)
+			btn.Position = UDim2.new(0, 4, 0, (i - 1) * 28 + 2)
+			btn.BackgroundColor3 = Theme.Panel
+			btn.BorderSizePixel = 0
+			btn.AutoButtonColor = false
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 12
+			btn.TextColor3 = (Settings[key] == name) and Theme.Accent or Theme.Text
+			btn.Text = name
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.Parent = scroll
+			corner(btn, 6)
+			local pad = Instance.new("UIPadding")
+			pad.PaddingLeft = UDim.new(0, 8)
+			pad.Parent = btn
+			btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Theme.PanelHover end)
+			btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Theme.Panel end)
+			btn.MouseButton1Click:Connect(function()
+				Settings[key] = name
+				render()
+				closeDropdown()
+				if onChange then onChange(name) end
+			end)
+		end
+	end
+	row.MouseButton1Click:Connect(openDropdown)
+	table.insert(refreshers, render)
+end
+
 local function addButton(text, desc, onClick)
 	local row = newRow(desc and 42 or 36, "TextButton")
 	hover(row)
@@ -3213,10 +3258,6 @@ addToggle("Limitar pelo FOV", "FOVEnabled", "Só mira dentro do círculo")
 addSlider("Raio do FOV", "FOVRadius", 20, 600, 5, 0, "Pixels")
 addSlider("Distância máxima", "AimMaxDist", 0, 2000, 50, 0, "0 = sem limite")
 
-table.insert(keybindRows, addSection("Teclas (PC)"))
-addKeybind("Tecla da mira", "AimKey", "Botão que ativa a mira", true)
-addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
-
 newPage("hitbox", "Hitbox")
 
 addSection("Hitbox Expander")
@@ -3271,10 +3312,6 @@ addToggle("Voo", "Fly", "Espaço sobe, Ctrl desce")
 addSlider("Velocidade do voo", "FlySpeed", 10, 5000, 5, 0, "Studs/s")
 addToggle("Voo seguro (auto)", "FlyAutoLimit", "Anti-puxão do voo")
 addToggle("Noclip", "Noclip", "Atravessa paredes")
-
-table.insert(keybindRows, addSection("Teclas (PC)"))
-addKeybind("Tecla do voo", "FlyKey", "Liga/desliga voo")
-addKeybind("Tecla do noclip", "NoclipKey", "Liga/desliga noclip")
 
 addSection("Invisibilidade (Seat Bug)")
 addToggle("Invisível (Seat Bug)", "SeatInvisible", "Ativa a invisibilidade via Seat Bug", function()
@@ -3340,14 +3377,46 @@ addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Empurrar: distância")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Tempo entre aplicações")
 
-addSection("Fling Players (universal)")
-addInfo("Arremessa players de verdade. Usa BodyAngularVelocity + noclip temporário.", 40)
-addToggle("Fling Players", "FlingPlayers", "Habilita arremesso em players")
-addCycle("Modo", "FlingPlayerMode", { "Mais próximo", "Alvo da mira", "Todos no alcance" }, "Quem é arremessado")
-addSlider("Alcance (players)", "FlingPlayerRange", 5, 200, 5, 0, "Studs")
+addSection("Fling Player")
+addInfo("Escolha o player e clique em Fling Player. O script te prende nele e gira.", 40)
+addDropdown("FlingTargetPlayer", "Escolher Player", "Seleciona o alvo do fling")
+addButton("Fling Player", "Arremessa o player selecionado (ou tecla B)", function()
+	Fling.flingSelected()
+end)
+addButton("Fling Player (Alvo da mira)", "Arremessa o player sob a mira", function()
+	local target = nil
+	if currentTarget and currentTarget.Player then
+		target = currentTarget.Player
+	else
+		local best, bd
+		local mo = UserInputService:GetMouseLocation()
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer and plr.Character then
+				local root = plr.Character:FindFirstChild("HumanoidRootPart")
+				if root then
+					local sp, on = Camera:WorldToViewportPoint(root.Position)
+					if on then
+						local d = (Vector2.new(sp.X, sp.Y) - mo).Magnitude
+						if not bd or d < bd then best, bd = plr, d end
+					end
+				end
+			end
+		end
+		target = best
+	end
+	if not target then
+		notify("Fling: nenhum alvo próximo", "off")
+		return
+	end
+	task.spawn(function()
+		local ok = Fling.doFlingPlayer(target)
+		notify(ok and ("Fling: " .. target.DisplayName) or "Fling: falhou", ok and "on" or "off")
+	end)
+end)
 
-table.insert(keybindRows, addSection("Teclas (PC)"))
-addKeybind("Tecla do Fling", "FlingKey", "Liga/desliga Fling (padrão G)")
+addSection("Configurações do Fling Player")
+addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 10, 0.5, 1, "Tempo preso no alvo")
+addSlider("Força de giro", "FlingPlayerSpin", 1000, 500000, 1000, 0, "BodyAngularVelocity")
 
 newPage("security", "Segurança")
 
@@ -3383,6 +3452,25 @@ table.insert(refreshers, function()
 	end
 end)
 
+newPage("keys", "Teclas")
+
+if isMobile then
+	addSection("Aviso")
+	addInfo("Rebind de teclas só funciona no PC. No mobile use os botões na tela.", 40)
+else
+	addSection("Teclas do Menu")
+	addKeybind("Menu (Ctrl direito)", "MENU_KEY", "Abre/fecha o menu do Universal")
+	addSection("Aim")
+	addKeybind("Tecla da Mira", "AimKey", "Ativa a mira (botão do mouse)", true)
+	addKeybind("Trocar de Alvo", "SwitchKey", "Próximo inimigo")
+	addSection("Movimento")
+	addKeybind("Voo", "FlyKey", "Liga/desliga voo")
+	addKeybind("Noclip", "NoclipKey", "Liga/desliga noclip")
+	addSection("Fling")
+	addKeybind("Fling Bots", "FlingKey", "Liga/desliga Fling Bots")
+	addKeybind("Fling Player", "FlingPlayerKey", "Arremessa o player selecionado")
+end
+
 newPage("buttons", "Botões")
 
 addSection("Botões na tela")
@@ -3405,9 +3493,6 @@ addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 --------------------------------------------------------------------
 local mobileBtns = {}
 local dragBtn, dragStart, dragFrom = nil, nil, nil
-local menuOpen = false
-
-local function toggleMenu() setMenu(not menuOpen) end
 
 local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	local b = Instance.new("TextButton")
@@ -3513,6 +3598,7 @@ local function applyDeviceLayout()
 		or "Ctrl direito abre/fecha  •  arraste para mover"
 	layoutTabs()
 	if not isMobile and activeTab == "buttons" then selectTab("aim") end
+	if isMobile and activeTab == "keys" then selectTab("aim") end
 	updateMobileBtns()
 end
 table.insert(deviceListeners, applyDeviceLayout)
@@ -3524,6 +3610,8 @@ applyDeviceLayout()
 --------------------------------------------------------------------
 -- MENU OPEN/CLOSE
 --------------------------------------------------------------------
+local menuOpen = false
+
 local function refreshAll()
 	for _, refresh in ipairs(refreshers) do refresh() end
 end
@@ -3593,7 +3681,7 @@ UserInputService.InputBegan:Connect(function(input)
 	end
 	if UserInputService:GetFocusedTextBox() then return end
 
-	if input.KeyCode == MENU_KEY then
+	if input.KeyCode == Settings.MENU_KEY then
 		if _G.TT_setMenu then
 			_G.TT_setMenu(not _G.TT_isMenuOpen())
 		end
@@ -3617,8 +3705,9 @@ UserInputService.InputBegan:Connect(function(input)
 	elseif input.KeyCode == Settings.FlingKey then
 		Settings.Fling = not Settings.Fling
 		uiRefresh()
+	elseif input.KeyCode == Settings.FlingPlayerKey then
+		task.spawn(function() Fling.flingSelected() end)
 	elseif input.KeyCode == Enum.KeyCode.H then
-		-- Script 2 (MM2) pode registrar esta tecla via _G.TT_hook_H
 		if _G.TT_hook_H then pcall(_G.TT_hook_H) end
 	end
 end)
@@ -3741,7 +3830,6 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 		local okp, pv = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
 		local ping = math.floor((okp and pv or 0) * 1000)
 		local parts = { math.floor(lastFps) .. " FPS", ping .. " ms" }
-		-- Script 2 pode adicionar info via _G.TT_hudExtra
 		if _G.TT_hudExtra then
 			local extra = _G.TT_hudExtra()
 			if type(extra) == "table" then
@@ -3762,10 +3850,10 @@ end)
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit Universal carregado  •  "
+	bootShow("TestToolkit Universal v68 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] Universal carregado com sucesso!")
+	print("[TestToolkit] Universal v68 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
