@@ -552,11 +552,11 @@ RunService.RenderStepped:Connect(function()
 	if not best then return end
 
 	triggerTargetName = best.Player and best.Player.DisplayName or best.Model.Name
-	local now = os.clock()
-	if now - lastTriggerShot < math.max(Settings.TriggerDelay, 0.016) then
-		triggerBotActive = true
-		return
-	end
+    local now = os.clock()
+    if Settings.TriggerDelay > 0 and (now - lastTriggerShot) < Settings.TriggerDelay then
+      triggerBotActive = true
+      return
+  end
 
 	triggerBotActive = true
 	lastTriggerShot = now
@@ -2269,7 +2269,7 @@ addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente")
 addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar a tecla")
 addToggle("Só visíveis", "TriggerVisible", "Só atira com LOS")
 addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
-addSlider("Delay", "TriggerDelay", 0.01, 1, 0.01, 2, "Entre tiros")
+addSlider("Delay", "TriggerDelay", 0, 1, 0.01, 2, "0 = sem delay")
 addSection("Alvos")
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addSection("Tecla (PC)")
