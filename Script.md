@@ -2,7 +2,7 @@
     TestToolkit v76 - Blindado contra nil
     Ctrl direito abre/fecha
     Aimbot: só por tecla (padrão Q)
-    Correções: Fling Player, Invisibilidade, Botões Mobile, FOV, Bypass Vel/Pulo, Teclas N/F/I
+    Correções: Fling Player, Invisibilidade, Botões Mobile, FOV, Bypass Vel/Pulo, Teclas N/F/I, Legit Aim real
 ]]
 
 local Players = game:GetService("Players")
@@ -327,7 +327,6 @@ local function getCandidates(force, fovOverride)
 		if rOn then
 			local d2 = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
 			local wd = (rp - camPos).Magnitude
-			-- Correção: Aplica o FOV corretamente na lista inicial
 			if (not fovOn or d2 <= fovLimit) and (maxD == 0 or wd <= maxD) then
 				rough[#rough + 1] = { T = t, Dist = d2, WorldDist = wd, Health = t.Humanoid.Health }
 			end
@@ -343,7 +342,6 @@ local function getCandidates(force, fovOverride)
 			local sp, onScreen = Camera.WorldToViewportPoint(part.Position)
 			if onScreen then
 				local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
-				-- Correção: Verifica o FOV novamente com a parte exata
 				if not fovOn or d <= fovLimit then
 					out[#out + 1] = {
 						Model = r.T.Model, Humanoid = r.T.Humanoid, Player = r.T.Player,
@@ -764,8 +762,8 @@ RunService.RenderStepped:Connect(function()
 	end)
 end)
 
--- LEGIT AIM
-RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
+-- LEGIT AIM (v76 CORRIGIDO - CFrame.lookAt + slerp)
+RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Last.Value - 10, function(dt)
 	local myRoot = getLocalRoot()
 	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
 	local aimOrigin
@@ -786,50 +784,65 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 	end
 
 	if isLegit() and isAiming() then
+		-- Valida alvo atual
 		if currentTarget then
 			local m, hum = currentTarget.Model, currentTarget.Humanoid
-			if not m.Parent or not isAlive(hum) then currentTarget = nil
-			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
+			if not m.Parent or not isAlive(hum) then
+				currentTarget = nil
+			elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then
+				currentTarget = nil
+			end
 		end
+
+		-- Busca novo alvo
 		if not currentTarget then
-			currentTarget = getCandidates()[1]
+			local list = getCandidates(true)
+			if #list > 0 then currentTarget = list[1] end
 		end
+
+		-- Valida a parte
 		if currentTarget then
 			local part = currentTarget.Part
 			if not part or not part.Parent then currentTarget = nil end
 		end
-		if currentTarget then
+
+		-- Aplica a mira
+		if currentTarget and currentTarget.Part then
 			local goalPos = predictPosition(currentTarget, dt)
-			local camCF = Camera.CFrame
-			local camPos = camCF.Position
+			local camPos = Camera.CFrame.Position
 			local toGoal = goalPos - camPos
-			if toGoal.Magnitude > 0.01 then
+
+			if toGoal.Magnitude > 0.1 then
+				-- CFrame apontando EXATAMENTE para o alvo
+				local targetCF = CFrame.lookAt(camPos, goalPos)
+
+				-- Calcula ângulo entre a direção atual e o alvo
+				local currentLook = Camera.CFrame.LookVector
 				local goalDir = toGoal.Unit
-				local curDir = camCF.LookVector
-				if not isFirstPerson and Settings.AimAtCursor then
-					local vp = Camera.ViewportSize
-					local mp = aimOrigin
-					local tanY = math.tan(math.rad(Camera.FieldOfView) / 2)
-					local lx = ((mp.X / vp.X) * 2 - 1) * tanY * (vp.X / vp.Y)
-					local ly = (1 - (mp.Y / vp.Y) * 2) * tanY
-					curDir = camCF:VectorToWorldSpace(Vector3.new(lx, ly, -1).Unit)
-				end
-				local angleRad = math.acos(math.clamp(curDir:Dot(goalDir), -1, 1))
-				local angle = math.deg(angleRad)
+				local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
+
+				-- Fator de suavização
 				local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
-				if angle <= Settings.SnapAngle or (firing and Settings.FireLock) then alpha = 1 end
-				local axis = curDir:Cross(goalDir)
-				if axis.Magnitude > 1e-4 then
-					local rot = CFrame.fromAxisAngle(axis.Unit, angleRad * alpha)
-					Camera.CFrame = CFrame.new(camPos) * rot * camCF.Rotation
-				end
+				alpha = math.clamp(alpha, 0, 1)
+
+				-- Cola quando está perto do alvo ou atirando
+				if angle <= Settings.SnapAngle then alpha = 1 end
+				if firing and Settings.FireLock then alpha = 1 end
+
+				-- SLERP: interpola APENAS a rotação, mantém a posição
+				local newRotation = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
+				Camera.CFrame = CFrame.new(camPos) * newRotation
 			end
+
+			-- Marcador visual
 			local sp, onScreen = Camera:WorldToViewportPoint(goalPos)
-			lockMarker.Visible = onScreen
 			if onScreen then
+				lockMarker.Visible = true
 				lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
 				lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
 				lockMarker.Size = UDim2.fromOffset(20, 20)
+			else
+				lockMarker.Visible = false
 			end
 		end
 	end
@@ -1072,7 +1085,7 @@ local function updateFly(hum, root, dt)
 end
 
 --------------------------------------------------------------------
--- ANTI FLING (reage só quando arremessado)
+-- ANTI FLING
 --------------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
 	pcall(function()
@@ -1206,7 +1219,6 @@ do
 		end
 		local target = nil
 		for _, plr in ipairs(Players:GetPlayers()) do
-			-- Correção: Verifica DisplayName e Name
 			if plr.DisplayName == name or plr.Name == name then
 				target = plr
 				break
@@ -1257,7 +1269,6 @@ local wsActive, jpActive = false, false
 LocalPlayer.CharacterAdded:Connect(function()
 	wsActive, jpActive = false, false
 	lastSafe = nil
-	-- Correção: Desliga a invisibilidade ao morrer
 	if Settings.SeatInvisible then
 		Settings.SeatInvisible = false
 		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
@@ -2195,7 +2206,6 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 		end
 	end)
 
-	-- Correção: Permitir digitar o valor
 	valueLabel.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			local box = Instance.new("TextBox")
@@ -2499,6 +2509,7 @@ if isMobile then
     addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
     addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 end
+
 --------------------------------------------------------------------
 -- BOTÕES MOBILE
 --------------------------------------------------------------------
@@ -2554,7 +2565,6 @@ makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() re
 	function() Settings.Fling = not Settings.Fling end)
 
 local function updateMobileBtns()
-	-- Correção: Só mostra botões se for mobile
 	if not isMobile then
 		for _, m in ipairs(mobileBtns) do m.Btn.Visible = false end
 		return
@@ -2739,9 +2749,10 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 			if Settings.TriggerBot then parts[#parts + 1] = "Trigger" end
+			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
 			if Settings.AimEnabled and (aimActive or Settings.AimMode == 3) then
-    parts[#parts + 1] = "🎯 MIRA"
-end
+				parts[#parts + 1] = "🎯 MIRA"
+			end
 			hud.Text = table.concat(parts, "  •  ")
 		end
 	end)
