@@ -1,6 +1,6 @@
 --[[
-    TestToolkit v90
-    - Fling Bots CORRIGIDO (sem colisão → só o bot voa)
+    TestToolkit v91
+    - Fling Bots CORRIGIDO (player teleportado pra fora → não é arremessado)
     - Fling Player Safe + K1LAS1K
     - Botão PARAR FLING
     - Touch Fling corrigido
@@ -123,7 +123,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v90 carregando...")
+bootShow("TestToolkit v91 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1182,7 +1182,7 @@ do
 		until Time + TimeToWait < tick()
 	end
 
-	-- FLING BOT: só o bot voa (sem colisão, direção oposta ao jogador)
+	-- FLING BOT: só o bot voa (player teleportado pra fora)
 	local function doFlingBot(targetModel)
 		if not targetModel or not targetModel.Parent then return false end
 		local hum = targetModel:FindFirstChildOfClass("Humanoid")
@@ -1190,10 +1190,36 @@ do
 		local hrp = targetModel:FindFirstChild("HumanoidRootPart")
 		if not hrp then return false end
 
+		local myChar = LocalPlayer.Character
 		local myRoot = getLocalRoot()
-		if not myRoot or not myRoot.Parent then return false end
+		if not myChar or not myRoot or not myRoot.Parent then return false end
 
-		-- Salva colisões e desabilita (evita arrastar o jogador)
+		-- Direção: pra longe de você
+		local dir = hrp.Position - myRoot.Position
+		if dir.Magnitude < 0.5 then
+			dir = -myRoot.CFrame.LookVector
+		end
+
+		local flatDir = Vector3.new(dir.X, 0, dir.Z)
+		if flatDir.Magnitude < 0.1 then
+			flatDir = -myRoot.CFrame.LookVector
+		end
+		flatDir = flatDir.Unit
+
+		-- ============ FIX PRINCIPAL ============
+		local savedCF = myRoot.CFrame
+		local savedVel = myRoot.AssemblyLinearVelocity
+		local savedAngVel = myRoot.AssemblyAngularVelocity
+
+		-- Teleporta o player pra fora do caminho
+		local safePos = myRoot.Position + Vector3.new(-flatDir.X * 15, 8, -flatDir.Z * 15)
+		pcall(function()
+			myRoot.CFrame = CFrame.new(safePos)
+			myRoot.AssemblyLinearVelocity = Vector3.zero
+			myRoot.AssemblyAngularVelocity = Vector3.zero
+		end)
+
+		-- Salva e desabilita colisão do bot
 		local savedCol = {}
 		for _, part in ipairs(targetModel:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -1202,21 +1228,12 @@ do
 			end
 		end
 
-		-- Direção: pra LONGE de você + pra cima
-		local dir = (hrp.Position - myRoot.Position)
-		if dir.Magnitude < 0.5 then
-			dir = -myRoot.CFrame.LookVector
-		end
-		local flyDir = (dir.Unit + Vector3.new(0, 1.5, 0)).Unit
-
-		-- Teleporta ele um pouco pra fora do seu corpo antes de arremessar
-		local offset = flyDir * 3
-		hrp.CFrame = hrp.CFrame + offset
+		local velocity = flatDir * 9e7 + Vector3.new(0, 5e6, 0)
 
 		local bv = Instance.new("BodyVelocity")
 		bv.MaxForce = Vector3.one * math.huge
 		bv.P = math.huge
-		bv.Velocity = flyDir * 9e7
+		bv.Velocity = velocity
 		bv.Parent = hrp
 
 		local bav = Instance.new("BodyAngularVelocity")
@@ -1231,10 +1248,10 @@ do
 				if not hrp.Parent or not hum.Parent then break end
 				if hum.Health <= 0 then break end
 
-				hrp.Velocity = flyDir * 9e7
-				hrp.RotVelocity = Vector3.new(9e6, 9e6, 9e6)
 				pcall(function()
-					bv.Velocity = flyDir * 9e7
+					hrp.Velocity = velocity
+					hrp.RotVelocity = Vector3.new(9e6, 9e6, 9e6)
+					bv.Velocity = velocity
 					bav.AngularVelocity = Vector3.new(9e6, 9e6, 9e6)
 				end)
 
@@ -1246,6 +1263,12 @@ do
 				if bav.Parent then bav:Destroy() end
 				for part, col in pairs(savedCol) do
 					if part.Parent then part.CanCollide = col end
+				end
+
+				if myRoot and myRoot.Parent then
+					myRoot.CFrame = savedCF
+					myRoot.AssemblyLinearVelocity = savedVel
+					myRoot.AssemblyAngularVelocity = savedAngVel
 				end
 			end)
 		end)
@@ -1338,7 +1361,7 @@ do
 
 	Fling.doFlingPlayer = doFlingPlayer
 
-	-- FLING PLAYER SAFE: só o alvo voa (sem colisão)
+	-- FLING PLAYER SAFE
 	Fling.doFlingPlayerSafe = function(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1355,7 +1378,6 @@ do
 		local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
 		if not TRootPart then return false end
 
-		-- Salva colisões
 		local savedCol = {}
 		for _, part in ipairs(TCharacter:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -1482,6 +1504,30 @@ do
 		end
 		cooldown[targetRoot] = now
 
+		local myRoot2 = getLocalRoot()
+		local savedMyCF = nil
+		local savedMyVel = nil
+		local savedMyAng = nil
+		if myRoot2 and myRoot2.Parent then
+			savedMyCF = myRoot2.CFrame
+			savedMyVel = myRoot2.AssemblyLinearVelocity
+			savedMyAng = myRoot2.AssemblyAngularVelocity
+
+			local dirAway = myRoot2.Position - targetRoot.Position
+			if dirAway.Magnitude < 0.5 then
+				dirAway = myRoot2.CFrame.LookVector
+			end
+			local flatAway = Vector3.new(dirAway.X, 0, dirAway.Z)
+			if flatAway.Magnitude > 0.1 then flatAway = flatAway.Unit else flatAway = myRoot2.CFrame.LookVector end
+
+			local safePos = myRoot2.Position + flatAway * 15 + Vector3.new(0, 8, 0)
+			pcall(function()
+				myRoot2.CFrame = CFrame.new(safePos)
+				myRoot2.AssemblyLinearVelocity = Vector3.zero
+				myRoot2.AssemblyAngularVelocity = Vector3.zero
+			end)
+		end
+
 		local savedCol = {}
 		for _, part in ipairs(TCharacter:GetDescendants()) do
 			if part:IsA("BasePart") then
@@ -1523,6 +1569,12 @@ do
 				if bav.Parent then bav:Destroy() end
 				for part, col in pairs(savedCol) do
 					if part.Parent then part.CanCollide = col end
+				end
+
+				if myRoot2 and myRoot2.Parent and savedMyCF then
+					myRoot2.CFrame = savedMyCF
+					myRoot2.AssemblyLinearVelocity = savedMyVel or Vector3.zero
+					myRoot2.AssemblyAngularVelocity = savedMyAng or Vector3.zero
 				end
 			end)
 		end)
@@ -2125,7 +2177,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v90"
+title.Text = "Test Toolkit v91"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2810,7 +2862,7 @@ addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido")
 
 newPage("fling", "Fling")
 addSection("Fling Bots")
-addToggle("Fling Bots", "Fling", "Arremessa bots próximos (sem te afetar)")
+addToggle("Fling Bots", "Fling", "Arremessa bots (você é teleportado pra fora)")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
@@ -2869,7 +2921,7 @@ addButton("FLING TODOS (SAFE)", "Só os alvos voam — você fica parado", funct
 	notify("Fling Safe: " .. count .. " players", "on")
 end)
 addSection("Touch Fling")
-addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto (sem te afetar)")
+addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto (você é teleportado pra fora)")
 addSlider("Alcance do Touch", "TouchFlingRange", 3, 30, 1, 0, "Studs")
 addKeybind("Tecla do Touch Fling", "TouchFlingKey", "Liga/desliga Touch Fling")
 addSection("Spectate")
@@ -3058,9 +3110,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v90 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v91 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v90 carregado com sucesso!")
+	print("[TestToolkit] v91 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
