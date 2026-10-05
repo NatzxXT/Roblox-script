@@ -1,11 +1,12 @@
 --[[
-    TestToolkit v94
-    - Aimbot CORRIGIDO (Camera Scriptable + slerp estável, sem tela girando)
-    - Mouse livre ao abrir o menu
-    - Modo Furtivo (bypass anti-cheat)
-    - Fling Bots + Fling Player Safe + K1LAS1K
+    TestToolkit v95
+    - Aimbot SÓ EM INIMIGOS (nunca aliados) + câmera blindada
+    - Watchdog de câmera (restaura se travar)
+    - Botão de emergência pra destravar
+    - Mouse livre no menu
+    - Modo Furtivo
+    - Fling Bots + Player Safe + K1LAS1K
     - Touch Fling + Spectate
-    - Silent Aim via flick
     - ESP apenas Highlight
 ]]
 
@@ -126,16 +127,38 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v94 carregando...")
+bootShow("TestToolkit v95 carregando...")
 
 --------------------------------------------------------------------
--- TEAM
+-- TEAM CHECK (ROBUSTO)
 --------------------------------------------------------------------
-local function isTeammate(model, plr)
-	if plr and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+-- Só considera inimigo se for de time diferente OU se não tem time
+-- Bots (models sem Player) sempre são inimigos
+local function isEnemy(model, plr)
+	-- Bots são inimigos
+	if not plr then return true end
+
+	-- Você mesmo nunca é inimigo
+	if plr == LocalPlayer then return false end
+
+	-- Sem times configurados = todos inimigos (exceto você)
+	local myTeam = LocalPlayer.Team
+	local otherTeam = plr.Team
+
+	-- Se qualquer lado não tem time, considera inimigo
+	if not myTeam or not otherTeam then
 		return true
 	end
-	return false
+
+	-- Mesmo time = aliado
+	if myTeam == otherTeam then return false end
+
+	return true
+end
+
+-- Mantém compatibilidade com a função antiga
+local function isTeammate(model, plr)
+	return not isEnemy(model, plr)
 end
 
 --------------------------------------------------------------------
@@ -196,6 +219,7 @@ local function isAlive(hum)
 	return true
 end
 
+-- getTargets SÓ retorna inimigos (nunca aliados)
 local function getTargets(purpose)
 	local now = os.clock()
 	local c = targetCache[purpose]
@@ -214,14 +238,15 @@ local function getTargets(purpose)
 			if plr then modeOk = plr ~= LocalPlayer and mode ~= 2
 			else modeOk = mode ~= 1 end
 			if modeOk then
-				local mate = isTeammate(model, plr)
-				if purpose == "esp" or not mate or (not Settings.TeamCheck) then
+				local enemy = isEnemy(model, plr)
+				-- SÓ adiciona se for inimigo
+				if enemy then
 					local root = getRoot(model)
 					if root then
 						local e = entries[model]
 						if not e then e = {}; entries[model] = e end
 						e.Model = model; e.Humanoid = hum; e.Root = root
-						e.Player = plr; e.Teammate = mate
+						e.Player = plr; e.Teammate = false
 						n += 1
 						list[n] = e
 					end
@@ -703,11 +728,26 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- LEGIT AIM v94 — Scriptable forçado + slerp estável
+-- LEGIT AIM v95 — Só inimigos + câmera blindada + watchdog
 --------------------------------------------------------------------
 local aimCameraSaved = false
 local aimOriginalCameraType = nil
 local aimOriginalCameraSubject = nil
+local aimWatchdogTime = 0
+
+local function restoreAimCamera()
+	if not aimCameraSaved then return end
+	pcall(function()
+		Camera.CameraType = aimOriginalCameraType or Enum.CameraType.Custom
+		if aimOriginalCameraSubject then
+			Camera.CameraSubject = aimOriginalCameraSubject
+		end
+	end)
+	aimCameraSaved = false
+	aimOriginalCameraType = nil
+	aimOriginalCameraSubject = nil
+end
+_G.TT_restoreAimCamera = restoreAimCamera
 
 RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
 	local myRoot = getLocalRoot()
@@ -722,34 +762,59 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 		aimOrigin = UserInputService:GetMouseLocation()
 	end
 
-	local showFov = Settings.FOVEnabled and Settings.AimEnabled and isLegit() and isAiming()
-	fovCircle.Visible = showFov
-	if showFov then
-		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
-		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
-	end
-
-	-- Se NÃO está mirando, restaura a câmera original
+	-- Se NÃO está mirando, restaura câmera
 	if not (isLegit() and isAiming()) then
-		if aimCameraSaved then
-			pcall(function()
-				Camera.CameraType = aimOriginalCameraType or Enum.CameraType.Custom
-				if aimOriginalCameraSubject then
-					Camera.CameraSubject = aimOriginalCameraSubject
-				end
-			end)
-			aimCameraSaved = false
-			aimOriginalCameraType = nil
-			aimOriginalCameraSubject = nil
-		end
+		restoreAimCamera()
 		lockMarker.Visible = false
 		aimDebugFound = 0
 		aimDebugTarget = "nenhum"
 		aimDebugMoved = false
+		fovCircle.Visible = false
 		return
 	end
 
-	-- Força Scriptable para o jogo não brigar com a gente
+	-- 1️⃣ PRIMEIRO acha alvo (só inimigos)
+	if currentTarget then
+		local m, hum = currentTarget.Model, currentTarget.Humanoid
+		if not m.Parent or not isAlive(hum) then
+			currentTarget = nil
+		else
+			-- Verifica se ainda é inimigo (pode ter mudado de time)
+			local plr = Players:GetPlayerFromCharacter(m)
+			if not isEnemy(m, plr) then
+				currentTarget = nil
+			end
+		end
+	end
+
+	if not currentTarget then
+		currentTarget = getCandidates()[1]
+	end
+
+	if currentTarget then
+		local part = currentTarget.Part
+		if not part or not part.Parent then currentTarget = nil end
+	end
+
+	-- 2️⃣ SE NÃO TEM ALVO → restaura câmera e sai (não força Scriptable)
+	if not (currentTarget and currentTarget.Part) then
+		restoreAimCamera()
+		lockMarker.Visible = false
+		aimDebugFound = 0
+		aimDebugTarget = "nenhum"
+		aimDebugMoved = false
+
+		if Settings.FOVEnabled then
+			fovCircle.Visible = true
+			fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
+			fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
+		else
+			fovCircle.Visible = false
+		end
+		return
+	end
+
+	-- 3️⃣ TEM ALVO → agora sim força Scriptable
 	if not aimCameraSaved then
 		aimOriginalCameraType = Camera.CameraType
 		aimOriginalCameraSubject = Camera.CameraSubject
@@ -761,52 +826,73 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 		end
 	end)
 
-	-- Acha alvo
-	if currentTarget then
-		local m, hum = currentTarget.Model, currentTarget.Humanoid
-		if not m.Parent or not isAlive(hum) then currentTarget = nil
-		elseif Settings.TeamCheck and isTeammate(m, currentTarget.Player) then currentTarget = nil end
-	end
-	if not currentTarget then
-		currentTarget = getCandidates()[1]
-	end
-	if currentTarget then
-		local part = currentTarget.Part
-		if not part or not part.Parent then currentTarget = nil end
+	-- FOV circle
+	if Settings.FOVEnabled then
+		fovCircle.Visible = true
+		fovCircle.Position = UDim2.fromOffset(aimOrigin.X, aimOrigin.Y)
+		fovCircle.Size = UDim2.fromOffset(Settings.FOVRadius * 2, Settings.FOVRadius * 2)
+	else
+		fovCircle.Visible = false
 	end
 
-	if currentTarget and currentTarget.Part then
-		local goalPos = predictPosition(currentTarget, dt)
-		local camPos = Camera.CFrame.Position
-		local toGoal = goalPos - camPos
+	-- Aplica mira no alvo
+	local goalPos = predictPosition(currentTarget, dt)
+	local camPos = Camera.CFrame.Position
+	local toGoal = goalPos - camPos
 
-		if toGoal.Magnitude > 0.5 then
-			local targetCF = CFrame.lookAt(camPos, goalPos)
-			local currentLook = Camera.CFrame.LookVector
-			local goalDir = toGoal.Unit
-			local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
+	if toGoal.Magnitude > 0.5 then
+		local targetCF = CFrame.lookAt(camPos, goalPos)
+		local currentLook = Camera.CFrame.LookVector
+		local goalDir = toGoal.Unit
+		local angle = math.deg(math.acos(math.clamp(currentLook:Dot(goalDir), -1, 1)))
 
-			local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
-			alpha = math.clamp(alpha, 0.01, 1)
+		local alpha = 1 - math.pow(Settings.Smoothness, dt * 60)
+		alpha = math.clamp(alpha, 0.01, 1)
 
-			if angle <= Settings.SnapAngle then alpha = 1 end
-			if firing and Settings.FireLock then alpha = 1 end
+		if angle <= Settings.SnapAngle then alpha = 1 end
+		if firing and Settings.FireLock then alpha = 1 end
 
-			-- Só aplica se o ângulo for maior que 0.3° (evita tremida infinita)
-			if angle > 0.3 then
-				local newRot = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
-				Camera.CFrame = CFrame.new(camPos) * newRot
-			end
-		end
-
-		local sp, onScreen = Camera:WorldToViewportPoint(goalPos)
-		lockMarker.Visible = onScreen
-		if onScreen then
-			lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
-			lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
-			lockMarker.Size = UDim2.fromOffset(20, 20)
+		if angle > 0.3 then
+			local newRot = Camera.CFrame.Rotation:Lerp(targetCF.Rotation, alpha)
+			Camera.CFrame = CFrame.new(camPos) * newRot
 		end
 	end
+
+	local sp, onScreen = Camera:WorldToViewportPoint(goalPos)
+	lockMarker.Visible = onScreen
+	if onScreen then
+		lockMarker.Position = UDim2.fromOffset(sp.X, sp.Y)
+		lockMarker.BackgroundColor3 = Color3.fromRGB(80, 255, 130)
+		lockMarker.Size = UDim2.fromOffset(20, 20)
+	end
+
+	aimDebugMoved = true
+	aimDebugTarget = currentTarget.Player and currentTarget.Player.DisplayName or currentTarget.Model.Name
+	aimDebugFound = 1
+	aimWatchdogTime = 0
+end)
+
+-- WATCHDOG: restaura a câmera se ficar presa em Scriptable por mais de 5s
+RunService.Heartbeat:Connect(function(dt)
+	pcall(function()
+		if not aimCameraSaved then
+			aimWatchdogTime = 0
+			return
+		end
+		-- Se tem alvo ativo, não conta
+		if isLegit() and isAiming() and currentTarget and currentTarget.Part then
+			aimWatchdogTime = 0
+			return
+		end
+		aimWatchdogTime = aimWatchdogTime + dt
+		if aimWatchdogTime > 5 then
+			restoreAimCamera()
+			aimActive = false
+			currentTarget = nil
+			aimWatchdogTime = 0
+			notify("Câmera restaurada automaticamente", "info")
+		end
+	end)
 end)
 
 -- FOV circles
@@ -1651,7 +1737,7 @@ end
 _G.TT_Spectate = Spectate
 
 --------------------------------------------------------------------
--- HEARTBEAT (movimento + touchfling)
+-- HEARTBEAT (movimento)
 --------------------------------------------------------------------
 local defaultWalkSpeed = 16
 local defaultJumpPower, defaultUseJumpPower = 50, true
@@ -1769,7 +1855,6 @@ local function litApply()
 	end
 end
 
--- Força FullBright/NoFog todo frame (contra reset do anti-cheat)
 RunService.RenderStepped:Connect(function()
 	pcall(function()
 		if Settings.FullBright then
@@ -2163,7 +2248,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v94"
+title.Text = "Test Toolkit v95"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2766,7 +2851,7 @@ addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente")
 addToggle("Silent Aim", "UseSilentAim", "Flick instantâneo no alvo")
 addCycle("Modo", "AimMode", { "Segurar", "Alternar", "Automático" }, "Como ativa", function() aimActive = false end)
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
-addToggle("Ignorar equipe", "TeamCheck", "Não mira aliados")
+addInfo("⚠️ Só mira em INIMIGOS (nunca aliados). Time é detectado automaticamente.", 30)
 addToggle("Checar parede", "AimWallCheck", "Só mira se enxergar")
 addSection("Legit Aim")
 addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mais rápida")
@@ -2786,6 +2871,20 @@ addSlider("Delay", "TriggerDelay", 0.01, 1, 0.01, 2, "Entre tiros")
 addSection("Teclas (PC)")
 addKeybind("Tecla da mira", "AimKey", "Ativa/desativa a mira")
 addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
+addSection("Emergência")
+addButton("🔓 RESTAURAR CÂMERA", "Destrava se a câmera ficar presa", function()
+	if _G.TT_restoreAimCamera then pcall(_G.TT_restoreAimCamera) end
+	pcall(function()
+		Camera.CameraType = Enum.CameraType.Custom
+		if LocalPlayer.Character then
+			local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if hum then Camera.CameraSubject = hum end
+		end
+	end)
+	aimActive = false
+	currentTarget = nil
+	notify("Câmera restaurada!", "on")
+end)
 
 newPage("hitbox", "Hitbox")
 addSection("Hitbox Expander")
@@ -2818,7 +2917,7 @@ newPage("player", "Jogador")
 addSection("Movimento")
 addToggle("Velocidade", "WalkSpeedOn", "Muda WalkSpeed")
 addSlider("Valor da velocidade", "WalkSpeed", 16, 5000, 5, 0, "Padrão 16")
-addToggle("Modo Furtivo", "StealthMode", "Bypass anti-cheat (The Rake, etc)")
+addToggle("Modo Furtivo", "StealthMode", "Bypass anti-cheat")
 addSlider("Vel. Furtiva", "StealthSpeed", 18, 60, 1, 0, "Recomendado: 24-32")
 addToggle("Pulo", "JumpOn", "Muda JumpPower")
 addSlider("Valor do pulo", "JumpPower", 50, 900, 5, 0, "Padrão 50")
@@ -2850,13 +2949,13 @@ addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido")
 
 newPage("fling", "Fling")
 addSection("Fling Bots")
-addToggle("Fling Bots", "Fling", "Arremessa bots (você é teleportado pra fora)")
+addToggle("Fling Bots", "Fling", "Arremessa bots")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
 addInfo("Escolha o player e clique em um botão.", 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
-addButton("FLING PLAYER (SAFE)", "Só o alvo voa — você fica parado", function()
+addButton("FLING PLAYER (SAFE)", "Só o alvo voa", function()
 	local name = Settings.FlingPlayerTarget
 	if not name or name == "Nenhum" then
 		notify("Fling: selecione um player", "off")
@@ -2872,7 +2971,7 @@ addButton("FLING PLAYER (SAFE)", "Só o alvo voa — você fica parado", functio
 		end
 	end
 end)
-addButton("FLING PLAYER (K1LAS1K)", "Arremessa VOCÊ + alvo juntos (mais forte)", function()
+addButton("FLING PLAYER (K1LAS1K)", "VOCÊ + alvo voam juntos", function()
 	local name = Settings.FlingPlayerTarget
 	if not name or name == "Nenhum" then
 		notify("Fling: selecione um player", "off")
@@ -2888,14 +2987,14 @@ addButton("FLING PLAYER (K1LAS1K)", "Arremessa VOCÊ + alvo juntos (mais forte)"
 		end
 	end
 end)
-addButton("PARAR FLING", "Para o K1LAS1K e volta pra posição original", function()
+addButton("PARAR FLING", "Volta pra posição original", function()
 	if Fling.flingActive then
 		Fling.stopFling()
 	else
 		notify("Fling K1LAS1K não está ativo", "off")
 	end
 end)
-addButton("FLING TODOS (SAFE)", "Só os alvos voam — você fica parado", function()
+addButton("FLING TODOS (SAFE)", "Só os alvos voam", function()
 	local count = 0
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and plr.Character then
@@ -2909,12 +3008,12 @@ addButton("FLING TODOS (SAFE)", "Só os alvos voam — você fica parado", funct
 	notify("Fling Safe: " .. count .. " players", "on")
 end)
 addSection("Touch Fling")
-addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto (você é teleportado pra fora)")
+addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto")
 addSlider("Alcance do Touch", "TouchFlingRange", 3, 30, 1, 0, "Studs")
 addKeybind("Tecla do Touch Fling", "TouchFlingKey", "Liga/desliga Touch Fling")
 addSection("Spectate")
 addDropdown("Spectate Player", "SpectateTarget", "Seguir um player")
-addButton("Spectar", "Começa a spectar o player selecionado", function()
+addButton("Spectar", "Começa a spectar", function()
 	local name = Settings.SpectateTarget
 	if not name or name == "Nenhum" then
 		notify("Spectate: selecione um player", "off")
@@ -2928,7 +3027,7 @@ addButton("Spectar", "Começa a spectar o player selecionado", function()
 		end
 	end
 end)
-addButton("Parar Spectate", "Volta a câmera pro seu personagem", function()
+addButton("Parar Spectate", "Volta a câmera", function()
 	Spectate.stop()
 	notify("Spectate parado", "info")
 end)
@@ -3129,9 +3228,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v94 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v95 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v94 carregado com sucesso!")
+	print("[TestToolkit] v95 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -3235,10 +3334,8 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
 			if Fling.flingActive then parts[#parts + 1] = "🔥 FLING" end
 			if Settings.AimEnabled and (aimActive or Settings.AimMode == 3) then
-				parts[#parts + 1] = "🎯 " .. tostring(aimDebugFound or 0) .. " alvos"
+				parts[#parts + 1] = "🎯 " .. tostring(aimDebugFound or 0) .. " inimigos"
 				parts[#parts + 1] = "alvo: " .. tostring(aimDebugTarget or "?")
-				parts[#parts + 1] = aimDebugMoved and "✔ moveu" or "✘ não moveu"
-				parts[#parts + 1] = Settings.AimWallCheck and "🧱 parede ON" or "🧱 parede OFF"
 			end
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
