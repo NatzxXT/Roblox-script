@@ -1,5 +1,5 @@
 --[[
-    TestToolkit v70 - UNIVERSAL (fix completo)
+    TestToolkit v71 - UNIVERSAL (fix menu)
     Ctrl direito abre/fecha
 ]]
 
@@ -118,7 +118,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v70 carregando...")
+bootShow("TestToolkit v71 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -226,7 +226,6 @@ _G.TT_getTargets = getTargets
 _G.TT_getRoot = getRoot
 _G.TT_humanoids = humanoids
 
--- Raycast para checar parede
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 local filterList = {}
@@ -437,7 +436,6 @@ local function stroke(obj, color, transparency, thickness)
 	return s
 end
 
--- FOV circles
 local fovCircle = Instance.new("Frame")
 fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 fovCircle.BackgroundTransparency = 1
@@ -468,7 +466,6 @@ lockMarker.Parent = gui
 corner(lockMarker, 9999)
 stroke(lockMarker, Theme.Bad, 0, 2)
 
--- Toasts
 local toastHolder = Instance.new("Frame")
 toastHolder.AnchorPoint = Vector2.new(1, 1)
 toastHolder.Position = UDim2.new(1, -16, 1, -16)
@@ -540,7 +537,7 @@ end
 _G.TT_notify = notify
 
 --------------------------------------------------------------------
--- LOCAL PLAYER + NOCLIP (corrigido)
+-- LOCAL PLAYER + NOCLIP
 --------------------------------------------------------------------
 local cChar, cHum, cRoot = nil, nil, nil
 
@@ -575,7 +572,7 @@ end
 if LocalPlayer.Character then trackMyCharacter(LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(trackMyCharacter)
 
--- NOCLIP: guardar estado anterior e reaplicar a cada frame
+-- NOCLIP
 local noclipTouched = setmetatable({}, { __mode = "k" })
 local noclipWasOn = false
 
@@ -778,8 +775,7 @@ local function updateTriggerBot()
 	simulateClick()
 end
 
--- RenderStepped: silent + trigger + aim legit
-RunService.RenderStepped:Connect(function(dt)
+RunService.RenderStepped:Connect(function()
 	pcall(function()
 		updateSilentTarget()
 		updateTriggerBot()
@@ -795,8 +791,11 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 	local aimOrigin
 	if isFirstPerson then
 		aimOrigin = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	elseif isMobile then
+		local vp = Camera.ViewportSize
+		aimOrigin = Vector2.new(vp.X / 2, vp.Y / 2)
 	else
-		aimOrigin = getAimOrigin()
+		aimOrigin = UserInputService:GetMouseLocation()
 	end
 
 	if isLegit() and isAiming() then
@@ -1232,7 +1231,7 @@ do
 end
 
 --------------------------------------------------------------------
--- HEARTBEAT (speed, jump, fly, antifling, antvoid)
+-- HEARTBEAT
 --------------------------------------------------------------------
 local defaultWalkSpeed = 16
 local defaultJumpPower, defaultUseJumpPower = 50, true
@@ -1479,7 +1478,7 @@ do
 		return spawn and (spawn.CFrame + Vector3.new(0, 5, 0)) or CFrame.new(0, 50, 0)
 	end
 
-	local function rescue(root, why)
+	local function rescue(root)
 		local now = os.clock()
 		lastRescue = now
 		antiKillHold = now + 0.5
@@ -1538,7 +1537,7 @@ do
 				end
 			end
 			if danger then
-				if now - lastRescue >= 0.1 then rescue(root, why) end
+				if now - lastRescue >= 0.1 then rescue(root) end
 				return
 			end
 			if not airborne and now - histTimer >= 0.4 and vel.Y > -30 then
@@ -1613,7 +1612,7 @@ end)
 local camFovDefault = nil
 
 --------------------------------------------------------------------
--- ESP (reformulado, sempre por trás de parede)
+-- ESP
 --------------------------------------------------------------------
 local espRoot = Instance.new("Frame")
 espRoot.Name = "ESP"
@@ -1675,7 +1674,6 @@ local function newEsp(model)
 	o.BoxStroke = stroke(o.Box, Color3.new(1, 1, 1), 0, 1.5)
 	o.Corners = {}
 	for i = 1, 8 do o.Corners[i] = mkFrame(holder) end
-	-- Barra de vida: fixa largura, altura dinâmica
 	o.HpBg = mkFrame(holder)
 	o.HpBg.BackgroundColor3 = Color3.new(0, 0, 0)
 	o.HpBg.BackgroundTransparency = 0.4
@@ -1709,7 +1707,6 @@ local function drawEsp(o, t, dist, now, vp)
 	local color = t.Teammate and ALLY_COLOR
 		or (Settings.Rainbow and Color3.fromHSV((now * 0.25) % 1, 0.85, 1) or Settings.ESPColor)
 
-	-- Highlight: sempre por trás de parede se Wallhack
 	if Settings.ESPHighlight then
 		local hl = o.HL
 		hl.Enabled = true
@@ -1774,7 +1771,6 @@ local function drawEsp(o, t, dist, now, vp)
 	if Settings.ShowHealth then
 		local hum = t.Humanoid
 		local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-		-- Barra fica à esquerda da caixa, do topo até a base
 		o.HpBg.Visible = true
 		o.HpBg.Position = UDim2.fromOffset(x - 7, y)
 		o.HpBg.Size = UDim2.fromOffset(4, boxH)
@@ -1949,13 +1945,8 @@ do
 end
 
 --------------------------------------------------------------------
--- INTERFACE
+-- RENDER PRINCIPAL (FOV + ESP)
 --------------------------------------------------------------------
-local menuOpen = false
-local refreshers = {}
-local uiRefresh
-
--- FOV / Silent / Trigger circles no render
 RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Value + 2, function(dt)
 	pcall(function()
 		local aimOrigin = getAimOrigin()
@@ -1992,8 +1983,12 @@ RunService:BindToRenderStep("TTUniversalVisuals", Enum.RenderPriority.Camera.Val
 end)
 
 --------------------------------------------------------------------
--- MENU (buildUI)
+-- INTERFACE
 --------------------------------------------------------------------
+local menuOpen = false
+local refreshers = {}
+local uiRefresh
+
 local function buildUI()
 
 local TAB_TOTAL = 8
@@ -2043,7 +2038,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v70"
+title.Text = "Test Toolkit v71"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2602,7 +2597,6 @@ end
 -- ABAS
 --------------------------------------------------------------------
 newPage("aim", "Mira")
-
 addSection("Modo de mira")
 addToggle("Aimbot", "AimEnabled", "Ativa a mira automática")
 addToggle("Legit Aim", "UseLegitAim", "Move a câmera suavemente")
@@ -2613,33 +2607,27 @@ addCycle("Prioridade", "Priority", { "Perto do cursor", "Perto de mim", "Menos v
 addCycle("Alvos", "TargetMode", { "Jogadores", "Bots", "Ambos" }, "Quem mirar")
 addToggle("Ignorar equipe", "TeamCheck", "Não mira aliados")
 addToggle("Checar parede", "AimWallCheck", "Só mira se enxergar")
-
 addSection("Legit Aim")
 addSlider("Suavidade", "Smoothness", 0.01, 0.95, 0.01, 2, "Menor = mais rápida")
 addSlider("Ângulo de trava", "SnapAngle", 0, 30, 1, 0, "Cola abaixo deste")
 addToggle("Trava ao atirar", "FireLock", "Sem suavização ao atirar")
 addToggle("Mirar no cursor", "AimAtCursor", "PC: alvo sob o cursor")
-
 addSection("Silent Aim")
 addSlider("FOV do Silent", "SilentAimFOV", 50, 800, 10, 0, "Raio")
 addToggle("Só visíveis", "SilentAimVisible", "Só atira com LOS")
-
 addSection("Trigger Bot")
 addToggle("Trigger Bot", "TriggerBot", "Atira automaticamente")
 addToggle("Sempre ativo", "TriggerBotAlways", "Sem precisar segurar")
 addSlider("FOV do Trigger", "TriggerFOV", 5, 400, 1, 0, "5 = centro")
 addSlider("Delay", "TriggerDelay", 0.01, 1, 0.01, 2, "Entre tiros")
-
 addSection("Tiro e previsão")
 addCycle("Tipo de tiro", "ShotType", { "Instantâneo", "Projétil", "Automático" }, "Método")
 addToggle("Previsão automática", "AutoPredict", "Compensa ping")
 addSlider("Força da previsão", "PredictScale", 0, 2, 0.05, 2, "Ajuste")
-
 addSection("FOV do Legit")
 addToggle("Limitar pelo FOV", "FOVEnabled", "Só dentro do círculo")
 addSlider("Raio do FOV", "FOVRadius", 20, 600, 5, 0, "Pixels")
 addSlider("Distância máxima", "AimMaxDist", 0, 2000, 50, 0, "0 = sem limite")
-
 addSection("Teclas (PC)")
 addKeybind("Tecla da mira", "AimKey", "Ativa a mira", true)
 addKeybind("Trocar de alvo", "SwitchKey", "Próximo inimigo")
@@ -2755,7 +2743,6 @@ addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 -- BOTÕES MOBILE
 --------------------------------------------------------------------
 local mobileBtns = {}
-local dragBtn, dragStart, dragFrom = nil, nil, nil
 
 local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	local b = Instance.new("TextButton")
@@ -2865,25 +2852,34 @@ closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
 
 refreshAll()
 
-return { setMenu = setMenu }
+-- KEYBIND (dentro do buildUI, único lugar onde MENU_KEY é tratado)
+UserInputService.InputBegan:Connect(function(input)
+	if rebinding then
+		local r = rebinding
+		if input.KeyCode == Enum.KeyCode.Escape then
+			rebinding = nil
+			r.apply(nil)
+			return
+		end
+		if input.KeyCode ~= Enum.KeyCode.Unknown then
+			rebinding = nil
+			r.apply(input.KeyCode)
+		end
+		return
+	end
+	if UserInputService:GetFocusedTextBox() then return end
+	if input.KeyCode == Settings.MENU_KEY then
+		setMenu(not menuOpen)
+	end
+end)
 
 end -- fim buildUI
 
 --------------------------------------------------------------------
--- RENDER (HUD)
---------------------------------------------------------------------
-RunService:BindToRenderStep("TTUniversalHUD", Enum.RenderPriority.Camera.Value + 3, function(dt)
-	pcall(function()
-		if _G.TT_uiRefresh then end
-	end)
-end)
-
---------------------------------------------------------------------
--- START
+-- BUILD + HUD
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	-- Atualiza HUD
 	local fpsFrames, fpsAcc, hudAcc = 0, 0, 0
 	local lastFps = 60
 	local hud = Instance.new("TextLabel")
@@ -2946,12 +2942,6 @@ if okUI then
 				local okp, pv = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
 				local ping = math.floor((okp and pv or 0) * 1000)
 				local parts = { math.floor(lastFps) .. " FPS", ping .. " ms" }
-				if _G.TT_hudExtra then
-					local extra = _G.TT_hudExtra()
-					if type(extra) == "table" then
-						for _, v in ipairs(extra) do parts[#parts + 1] = v end
-					end
-				end
 				if Settings.Fly then parts[#parts + 1] = "Voo" end
 				if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 				if Settings.Fling then parts[#parts + 1] = "Fling" end
@@ -2961,17 +2951,17 @@ if okUI then
 		end)
 	end)
 
-	bootShow("TestToolkit v70 carregado  •  "
+	bootShow("TestToolkit v71 carregado  •  "
 		.. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v70 carregado com sucesso!")
+	print("[TestToolkit] v71 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
 end
 
 --------------------------------------------------------------------
--- TECLAS (depois do buildUI pra garantir)
+-- TECLAS (fora do buildUI, só as teclas de jogo)
 --------------------------------------------------------------------
 local function matchesBind(input, bind)
 	if typeof(bind) ~= "EnumItem" then return false end
@@ -2980,33 +2970,8 @@ local function matchesBind(input, bind)
 end
 
 UserInputService.InputBegan:Connect(function(input)
-	if rebinding then
-		local r = rebinding
-		if input.KeyCode == Enum.KeyCode.Escape then
-			rebinding = nil
-			r.apply(nil)
-			return
-		end
-		local bind = nil
-		if input.KeyCode ~= Enum.KeyCode.Unknown then
-			bind = input.KeyCode
-		elseif r.mouse and (input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.MouseButton2
-			or input.UserInputType == Enum.UserInputType.MouseButton3) then
-			bind = input.UserInputType
-		end
-		if bind then
-			rebinding = nil
-			r.apply(bind)
-		end
-		return
-	end
 	if UserInputService:GetFocusedTextBox() then return end
-
-	if input.KeyCode == Settings.MENU_KEY then
-		if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
-		return
-	end
+	if rebinding then return end
 
 	if matchesBind(input, Settings.AimKey) then
 		if Settings.AimMode == 1 then aimActive = true
