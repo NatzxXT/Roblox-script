@@ -1,8 +1,9 @@
 --[[
-    TestToolkit v87
-    - Fling K1LAS1K (FallenPartsDestroyHeight + FPos)
-    - Botão PARAR FLING (restaura posição original)
-    - Touch Fling corrigido (não trava mais o jogador)
+    TestToolkit v88
+    - Fling Bots CORRIGIDO (aceita Model direto)
+    - Fling Player K1LAS1K (FallenPartsDestroyHeight + FPos)
+    - Botão PARAR FLING
+    - Touch Fling corrigido
     - Silent Aim via flick
     - Wall check via câmera
     - ESP apenas Highlight
@@ -122,7 +123,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v87 carregando...")
+bootShow("TestToolkit v88 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1080,7 +1081,6 @@ do
 	local lastFling = 0
 	local FlingActive = false
 
-	-- Estado global
 	Fling.flingActive = false
 	Fling.flingOriginalCFrame = nil
 	Fling.flingBV = nil
@@ -1129,7 +1129,7 @@ do
 		notify("Fling parado", "info")
 	end
 
-	-- FPos (Força Posicional)
+	-- FPos
 	local function FPos(BasePart, Pos, Ang, RootPart, Character, myRoot)
 		RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
 		Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
@@ -1182,7 +1182,7 @@ do
 		until Time + TimeToWait < tick()
 	end
 
-	-- Fling em um player
+	-- Fling em Player OU Model (NPC)
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1193,8 +1193,15 @@ do
 		local RootPart = Character:FindFirstChild("HumanoidRootPart")
 		if not RootPart then return false end
 
-		local TCharacter = target.Character
+		-- Aceita Player OU Model
+		local TCharacter
+		if typeof(target) == "Instance" and target:IsA("Model") then
+			TCharacter = target
+		elseif target.Character then
+			TCharacter = target.Character
+		end
 		if not TCharacter then return false end
+
 		local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
 		if not THumanoid then return false end
 		local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
@@ -1202,17 +1209,14 @@ do
 
 		if THumanoid.Health <= 0 then return false end
 
-		-- Salva posição original
 		Fling.flingOriginalCFrame = RootPart.CFrame
 		Fling.flingActive = true
 		FlingActive = true
 
-		-- FallenPartsDestroyHeight = NaN
 		local oldFPDH = workspace.FallenPartsDestroyHeight
 		Fling.flingOldFPDH = oldFPDH
 		workspace.FallenPartsDestroyHeight = 0/0
 
-		-- BodyVelocity
 		local BV = Instance.new("BodyVelocity")
 		BV.Parent = RootPart
 		BV.Velocity = Vector3.new(0, 0, 0)
@@ -1230,7 +1234,6 @@ do
 				SFBasePart(TCharacter:FindFirstChild("Head"), RootPart, Character, Humanoid)
 			end
 
-			-- Restaura automaticamente se não foi parado
 			if Fling.flingActive then
 				Fling.flingActive = false
 				FlingActive = false
@@ -1300,9 +1303,10 @@ do
 				if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
 					local plr = Players:GetPlayerFromCharacter(model)
 					if not plr then
+						-- NPC: passa o Model direto
 						local r = getRoot(model)
 						if r and (r.Position - myPos).Magnitude <= range then
-							doFlingPlayer(plr or model)
+							doFlingPlayer(model)
 						end
 					end
 				end
@@ -1348,7 +1352,6 @@ do
 		local RootPart = Character:FindFirstChild("HumanoidRootPart")
 		if not RootPart then return false end
 
-		-- Salva estado
 		local savedCFrame = RootPart.CFrame
 		local savedVelocity = RootPart.Velocity
 		local savedRotVelocity = RootPart.RotVelocity
@@ -1396,7 +1399,6 @@ do
 				end
 			until Time + TimeToWait < tick()
 
-			-- RESTAURA TUDO (evita travar)
 			pcall(function()
 				if BV.Parent then BV:Destroy() end
 				workspace.FallenPartsDestroyHeight = oldFPDH
@@ -2013,7 +2015,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v87"
+title.Text = "Test Toolkit v88"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2932,9 +2934,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v87 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v88 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v87 carregado com sucesso!")
+	print("[TestToolkit] v88 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
