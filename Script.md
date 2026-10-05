@@ -1,7 +1,7 @@
 --[[
-    TestToolkit v75 - Completo com tudo funcionando
+    TestToolkit v76 - Blindado contra nil
     Ctrl direito abre/fecha
-    Aimbot por tecla (padrão Q)
+    Aimbot: só por tecla (padrão Q)
 ]]
 
 local Players = game:GetService("Players")
@@ -28,7 +28,7 @@ local Settings = {
 	ESP = true, Rainbow = true, ShowNames = true, ShowHealth = true,
 	Wallhack = true, ESPMaxDist = 600, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
-	ESPBox = 2, Tracers = false,
+	ESPBox = 2, Tracers = false, TracerOrigin = 1,
 
 	-- Aim
 	TargetMode = 3,
@@ -109,7 +109,7 @@ local function bootShow(text, color, hideAfter)
 			bootLabel.Parent = bootGui
 			bootGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 		end
-		bootLabel.Text = text
+		bootLabel.Text = tostring(text or "")
 		bootLabel.TextColor3 = color or Color3.new(1, 1, 1)
 		bootGui.Enabled = true
 		if hideAfter then
@@ -119,7 +119,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v75 carregando...")
+bootShow("TestToolkit v76 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -450,6 +450,7 @@ local toastOrder = 0
 
 local function notify(text, kind)
 	if not Settings.Notifications then return end
+	text = tostring(text or "")
 	local count = 0
 	for _, c in ipairs(toastHolder:GetChildren()) do
 		if c:IsA("Frame") then count += 1 end
@@ -637,7 +638,7 @@ local function predictPosition(t, dt)
 	return pos + hv * time
 end
 
--- SILENT AIM: hook em Camera.WorldToViewportPoint
+-- SILENT AIM hook
 local silentHooked = false
 local function installSilentHook()
 	if silentHooked then return end
@@ -762,7 +763,6 @@ end)
 
 -- LEGIT AIM
 RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
-	if spectating then return end
 	local myRoot = getLocalRoot()
 	local isFirstPerson = myRoot and (Camera.CFrame.Position - myRoot.Position).Magnitude < 1.5
 	local aimOrigin
@@ -775,7 +775,6 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 		aimOrigin = UserInputService:GetMouseLocation()
 	end
 
-	-- FOV círculos visíveis
 	local showFov = Settings.FOVEnabled and Settings.AimEnabled and isLegit() and isAiming()
 	fovCircle.Visible = showFov
 	if showFov then
@@ -832,7 +831,6 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 		end
 	end
 
-	-- Silent marker
 	if Settings.AimEnabled and isSilent() and silentTarget and silentTarget.Part and silentTarget.Part.Parent then
 		local sp, onScreen = Camera.WorldToViewportPoint(silentTarget.Part.Position)
 		if onScreen then
@@ -843,7 +841,6 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 		end
 	end
 
-	-- Trigger marker
 	if triggerBotActive then
 		lockMarker.Visible = true
 		lockMarker.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
@@ -856,7 +853,6 @@ RunService:BindToRenderStep("TTUniversalAim", Enum.RenderPriority.Camera.Value +
 	end
 end)
 
--- FOV circles de Silent e Trigger
 RunService.RenderStepped:Connect(function()
 	local showSilentFov = Settings.AimEnabled and Settings.UseSilentAim and isAiming()
 	silentFovCircle.Visible = showSilentFov
@@ -875,7 +871,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- HITBOX (sem CollisionGroup, simples)
+-- HITBOX
 --------------------------------------------------------------------
 local HitboxExpander = {}
 do
@@ -1075,25 +1071,6 @@ end
 --------------------------------------------------------------------
 -- ANTI FLING (reage só quando arremessado)
 --------------------------------------------------------------------
-local antiflingConns = setmetatable({}, { __mode = "k" })
-local function applyAntiFling()
-	if not Settings.AntiFling then
-		-- limpa
-		for plr, conn in pairs(antiflingConns) do
-			pcall(function() conn:Disconnect() end)
-			antiflingConns[plr] = nil
-		end
-		return
-	end
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= LocalPlayer and not antiflingConns[plr] then
-			antiflingConns[plr] = plr.CharacterAdded:Connect(function()
-				-- apenas tracking, sem bloqueio permanente
-			end)
-		end
-	end
-end
-
 RunService.Heartbeat:Connect(function()
 	pcall(function()
 		if not Settings.AntiFling then return end
@@ -1237,7 +1214,7 @@ do
 		end
 		task.spawn(function()
 			local ok = doFlingPlayer(target)
-			notify(ok and ("Fling: " .. target.DisplayName) or "Fling: falhou", ok and "on" or "off")
+			notify(ok and ("Fling: " .. tostring(target.DisplayName)) or "Fling: falhou", ok and "on" or "off")
 		end)
 	end
 
@@ -1560,7 +1537,8 @@ local function drawEsp(o, t, dist, now, vp)
 	if Settings.ShowNames then
 		local plr = t.Player
 		o.Name.Visible = true
-		o.Name.Text = (plr and plr.DisplayName or model.Name) .. "  [" .. math.floor(dist) .. "m]"
+		local displayName = (plr and plr.DisplayName) or model.Name or "?"
+		o.Name.Text = tostring(displayName) .. "  [" .. tostring(math.floor(dist or 0)) .. "m]"
 		o.Name.TextColor3 = color
 		o.Name.Position = UDim2.fromOffset(px(center.X), y - 2)
 	else
@@ -1569,8 +1547,9 @@ local function drawEsp(o, t, dist, now, vp)
 
 	if Settings.Tracers and center.Z > 0 then
 		local p1
-		if Settings.TracerOrigin == 1 then p1 = Vector2.new(vp.X / 2, vp.Y)
-		elseif Settings.TracerOrigin == 2 then p1 = vp / 2
+		local origin = Settings.TracerOrigin or 1
+		if origin == 1 then p1 = Vector2.new(vp.X / 2, vp.Y)
+		elseif origin == 2 then p1 = vp / 2
 		else p1 = getAimOrigin() end
 		local p2 = Vector2.new(center.X, center.Y)
 		local d = p2 - p1
@@ -1783,7 +1762,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v75"
+title.Text = "Test Toolkit v76"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -1990,7 +1969,7 @@ local function rowLabel(parent, text, desc, rightPad)
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	l.TextColor3 = Theme.Text
 	l.TextTruncate = Enum.TextTruncate.AtEnd
-	l.Text = text
+	l.Text = tostring(text or "")
 	l.Parent = parent
 	if desc then
 		local d = Instance.new("TextLabel")
@@ -2002,7 +1981,7 @@ local function rowLabel(parent, text, desc, rightPad)
 		d.TextXAlignment = Enum.TextXAlignment.Left
 		d.TextColor3 = Theme.SubText
 		d.TextTruncate = Enum.TextTruncate.AtEnd
-		d.Text = desc
+		d.Text = tostring(desc or "")
 		d.Parent = parent
 	end
 	return l
@@ -2033,7 +2012,7 @@ local function addSection(text)
 	l.TextSize = 12
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	l.TextColor3 = Theme.Accent
-	l.Text = string.upper(text)
+	l.Text = string.upper(tostring(text or ""))
 	l.Parent = holder
 	local line = Instance.new("Frame")
 	line.AnchorPoint = Vector2.new(0, 1)
@@ -2058,7 +2037,7 @@ local function addInfo(text, height)
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	l.TextYAlignment = Enum.TextYAlignment.Top
 	l.TextColor3 = Theme.SubText
-	l.Text = text
+	l.Text = tostring(text or "")
 	l.Parent = currentPage
 	return l
 end
@@ -2098,7 +2077,7 @@ local function addToggle(text, key, desc, onChange)
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = not Settings[key]
 		for _, refresh in ipairs(refreshers) do refresh() end
-		notify(text .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
+		notify(tostring(text) .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
 		if onChange then onChange() end
 	end)
 end
@@ -2117,7 +2096,10 @@ local function addCycle(text, key, options, desc, onChange)
 	arrow.TextColor3 = Theme.Accent
 	arrow.Text = ">"
 	arrow.Parent = row
-	local function render() l.Text = text .. ": " .. options[Settings[key]] end
+	local function render()
+		local opt = options[Settings[key]] or "?"
+		l.Text = tostring(text) .. ": " .. tostring(opt)
+	end
 	render()
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = (Settings[key] % #options) + 1
@@ -2226,16 +2208,19 @@ local function addKeybind(text, key, desc, allowMouse)
 	row.Visible = not isMobile
 	hover(row)
 	local l = rowLabel(row, "", desc, 30)
-	local function render() l.Text = text .. ": [" .. Settings[key].Name .. "]" end
+	local function render()
+		local kb = Settings[key]
+		l.Text = tostring(text) .. ": [" .. tostring(kb and kb.Name or "?") .. "]"
+	end
 	render()
 	row.MouseButton1Click:Connect(function()
-		l.Text = text .. ": pressione uma tecla..."
+		l.Text = tostring(text) .. ": pressione uma tecla..."
 		rebinding = {
 			mouse = allowMouse,
 			apply = function(bind)
 				if bind then
 					Settings[key] = bind
-					notify(text .. ": " .. bind.Name, "info")
+					notify(tostring(text) .. ": " .. tostring(bind.Name), "info")
 				end
 				render()
 			end,
@@ -2272,7 +2257,7 @@ local function addDropdown(text, key, desc, onChange)
 	local function getList()
 		local list = { "Nenhum" }
 		for _, plr in ipairs(Players:GetPlayers()) do
-			if plr ~= LocalPlayer then list[#list + 1] = plr.DisplayName end
+			if plr ~= LocalPlayer then list[#list + 1] = tostring(plr.DisplayName or plr.Name) end
 		end
 		return list
 	end
@@ -2280,7 +2265,7 @@ local function addDropdown(text, key, desc, onChange)
 		if dropdownFrame then dropdownFrame:Destroy(); dropdownFrame = nil end
 	end
 	local function render()
-		l.Text = text .. ": " .. (Settings[key] or "Nenhum")
+		l.Text = tostring(text) .. ": " .. tostring(Settings[key] or "Nenhum")
 	end
 	render()
 	local function openDropdown()
@@ -2320,7 +2305,7 @@ local function addDropdown(text, key, desc, onChange)
 			btn.Font = Enum.Font.Gotham
 			btn.TextSize = 12
 			btn.TextColor3 = (Settings[key] == name) and Theme.Accent or Theme.Text
-			btn.Text = name
+			btn.Text = tostring(name)
 			btn.TextXAlignment = Enum.TextXAlignment.Left
 			btn.Parent = scroll
 			corner(btn, 6)
@@ -2489,7 +2474,7 @@ local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	b.Font = Enum.Font.GothamBold
 	b.TextSize = 11
 	b.TextColor3 = Theme.Text
-	b.Text = label
+	b.Text = tostring(label or "")
 	b.Visible = false
 	b.ZIndex = 40
 	b.Parent = gui
@@ -2611,12 +2596,11 @@ end -- fim buildUI
 --------------------------------------------------------------------
 -- BUILD
 --------------------------------------------------------------------
-local spectating = false
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v75 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v76 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v75 carregado com sucesso!")
+	print("[TestToolkit] v76 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2702,7 +2686,10 @@ RunService.RenderStepped:Connect(function(dt)
 			hudAcc = 0
 			local okp, pv = pcall(LocalPlayer.GetNetworkPing, LocalPlayer)
 			local ping = math.floor((okp and pv or 0) * 1000)
-			local parts = { math.floor(lastFps) .. " FPS", ping .. " ms" }
+			local parts = {
+				tostring(math.floor(lastFps or 0)) .. " FPS",
+				tostring(ping) .. " ms",
+			}
 			if Settings.Fly then parts[#parts + 1] = "Voo" end
 			if Settings.Noclip then parts[#parts + 1] = "Noclip" end
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
