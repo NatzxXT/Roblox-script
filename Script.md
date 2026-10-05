@@ -1,11 +1,11 @@
 --[[
-    TestToolkit v82
-    - Wall check usando câmera como origem
-    - Silent Aim via flick instantâneo
-    - ESP somente Highlight (sem caixa bugada)
-    - Touch Fling (arremessa quem chega perto)
-    - Fling Player via Touch
-    - Spectate Player
+    TestToolkit v83
+    - Fling K1LAS1K (camera + 9e7 velocity + loop)
+    - Touch Fling com método universal
+    - Fling Todos os Players
+    - Silent Aim via flick
+    - Wall check via câmera
+    - ESP apenas Highlight
 ]]
 
 local Players = game:GetService("Players")
@@ -69,14 +69,12 @@ local Settings = {
 	FlingRange = 12, FlingPower = 3000,
 	FlingRepeat = 0.1,
 	FlingPlayerTarget = "Nenhum",
-	FlingPlayerDuration = 2.5,
+	FlingPlayerDuration = 1,
 	FlingPlayerKey = Enum.KeyCode.B,
 
-	-- Touch Fling
 	TouchFling = false, TouchFlingKey = Enum.KeyCode.T,
 	TouchFlingRange = 8,
 
-	-- Spectate
 	Spectating = false, SpectateTarget = "Nenhum",
 
 	MENU_KEY = Enum.KeyCode.RightControl,
@@ -124,7 +122,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v82 carregando...")
+bootShow("TestToolkit v83 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -1075,12 +1073,13 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- FLING
+-- FLING K1LAS1K (método universal)
 --------------------------------------------------------------------
 local Fling = {}
 do
 	local lastFling = 0
 
+	-- Fling bot (arremessa NPCs próximos)
 	local function doFling(targetRoot, myRoot, power)
 		if not targetRoot or not targetRoot.Parent then return end
 		if not myRoot or not myRoot.Parent then return end
@@ -1105,44 +1104,87 @@ do
 		if bav.Parent then bav:Destroy() end
 	end
 
+	-- FLING PLAYER K1LAS1K
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
-		local targetRoot = getRoot(target.Character)
-		local myRoot = getLocalRoot()
-		if not targetRoot or not myRoot then return false end
-		local home = myRoot.CFrame
-		local spin = Instance.new("BodyAngularVelocity")
-		spin.MaxTorque = Vector3.one * math.huge
-		spin.AngularVelocity = myRoot.CFrame:VectorToWorldSpace(Vector3.new(0, 30, 0))
-		spin.Parent = myRoot
-		local savedNoclip = {}
-		local char = LocalPlayer.Character
-		if char then
-			for _, part in ipairs(char:GetChildren()) do
-				if part:IsA("BasePart") then
-					savedNoclip[part] = part.CanCollide
-					part.CanCollide = false
-				end
-			end
-		end
-		local duration = Settings.FlingPlayerDuration or 2.5
+
+		local targetChar = target.Character
+		if not targetChar then return false end
+		local targetHum = targetChar:FindFirstChildOfClass("Humanoid")
+		if not targetHum or targetHum.Health <= 0 then return false end
+		local targetHRP = targetChar:FindFirstChild("HumanoidRootPart")
+		if not targetHRP then return false end
+
+		local myChar = LocalPlayer.Character
+		if not myChar then return false end
+		local myHum = myChar:FindFirstChildOfClass("Humanoid")
+		if not myHum or myHum.Health <= 0 then return false end
+		local myHRP = myChar:FindFirstChild("HumanoidRootPart")
+		if not myHRP then return false end
+
+		-- Salva estado da câmera
+		local savedSubject = Camera.CameraSubject
+		local savedType = Camera.CameraType
+
+		-- Muda o foco para o alvo (parte crítica do método K1LAS1K)
+		pcall(function()
+			Camera.CameraSubject = targetHum
+			Camera.CameraType = Enum.CameraType.Custom
+		end)
+
+		local duration = Settings.FlingPlayerDuration or 1
+		if duration < 0.5 then duration = 0.5 end
+
 		local started = os.clock()
+		local flingForce = 9e7
+		local spinForce = 9e8
+
 		while os.clock() - started < duration do
-			local currentTarget = getRoot(target.Character)
-			if not currentTarget or not myRoot.Parent then break end
-			myRoot.CFrame = currentTarget.CFrame * CFrame.Angles(0, (os.clock() - started) * 30, 0)
-			myRoot.AssemblyLinearVelocity = Vector3.zero
+			local currentTargetChar = target.Character
+			if not currentTargetChar then break end
+			local currentTargetHRP = currentTargetChar:FindFirstChild("HumanoidRootPart")
+			if not currentTargetHRP then break end
+			if not myHRP.Parent then break end
+
+			-- Copia CFrame do alvo pro nosso
+			myHRP.CFrame = currentTargetHRP.CFrame
+
+			-- Aplica velocidade absurda em AMBOS
+			myHRP.AssemblyLinearVelocity = Vector3.new(flingForce, flingForce, flingForce)
+			myHRP.AssemblyAngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
+
+			currentTargetHRP.AssemblyLinearVelocity = Vector3.new(flingForce, flingForce, flingForce)
+			currentTargetHRP.AssemblyAngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
+
+			-- BodyVelocity reforçado
+			pcall(function()
+				local bv = Instance.new("BodyVelocity")
+				bv.MaxForce = Vector3.one * math.huge
+				bv.P = math.huge
+				bv.Velocity = Vector3.new(flingForce, flingForce, flingForce)
+				bv.Parent = currentTargetHRP
+
+				local bav = Instance.new("BodyAngularVelocity")
+				bav.MaxTorque = Vector3.one * math.huge
+				bav.P = math.huge
+				bav.AngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
+				bav.Parent = currentTargetHRP
+
+				task.delay(0.1, function()
+					if bv.Parent then bv:Destroy() end
+					if bav.Parent then bav:Destroy() end
+				end)
+			end)
+
 			RunService.Heartbeat:Wait()
 		end
-		spin:Destroy()
-		if myRoot.Parent then
-			myRoot.AssemblyAngularVelocity = Vector3.zero
-			myRoot.AssemblyLinearVelocity = Vector3.zero
-			myRoot.CFrame = home
-		end
-		for part, cc in pairs(savedNoclip) do
-			if part.Parent then part.CanCollide = cc end
-		end
+
+		-- Restaura câmera
+		pcall(function()
+			Camera.CameraSubject = savedSubject or myHum
+			Camera.CameraType = savedType or Enum.CameraType.Custom
+		end)
+
 		return true
 	end
 
@@ -1197,7 +1239,7 @@ do
 end
 
 --------------------------------------------------------------------
--- TOUCH FLING (arremessa qualquer player que chegar perto)
+-- TOUCH FLING (K1LAS1K)
 --------------------------------------------------------------------
 local TouchFling = {}
 do
@@ -1216,43 +1258,68 @@ do
 		if not targetRoot or not targetRoot.Parent then return false end
 		if not myRoot or not myRoot.Parent then return false end
 
-		local hum = targetRoot.Parent:FindFirstChildOfClass("Humanoid")
-		if hum and hum.Health <= 0 then return false end
+		local targetChar = targetRoot.Parent
+		local targetHum = targetChar:FindFirstChildOfClass("Humanoid")
+		if not targetHum or targetHum.Health <= 0 then return false end
 
 		local now = os.clock()
-		if cooldown[targetRoot] and now - cooldown[targetRoot] < 0.5 then
+		if cooldown[targetRoot] and now - cooldown[targetRoot] < 0.8 then
 			return false
 		end
 		cooldown[targetRoot] = now
 
-		local savedPos = myRoot.CFrame
-		local savedVel = myRoot.AssemblyLinearVelocity
-		local savedAng = myRoot.AssemblyAngularVelocity
+		local savedSubject = Camera.CameraSubject
+		local savedType = Camera.CameraType
 
-		myRoot.CFrame = targetRoot.CFrame
+		pcall(function()
+			Camera.CameraSubject = targetHum
+			Camera.CameraType = Enum.CameraType.Custom
+		end)
 
-		local bv = Instance.new("BodyVelocity")
-		bv.MaxForce = Vector3.one * math.huge
-		bv.P = math.huge
-		bv.Velocity = Vector3.new(9e7, 9e7, 9e7)
-		bv.Parent = targetRoot
+		task.spawn(function()
+			local myHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+			local flingForce = 9e7
+			local spinForce = 9e8
+			local endTime = os.clock() + 1
 
-		local bav = Instance.new("BodyAngularVelocity")
-		bav.MaxTorque = Vector3.one * math.huge
-		bav.P = math.huge
-		bav.AngularVelocity = Vector3.new(60, 60, 60)
-		bav.Parent = targetRoot
+			while os.clock() < endTime do
+				if not targetRoot.Parent or not myRoot.Parent then break end
 
-		task.wait(0.15)
+				myRoot.CFrame = targetRoot.CFrame
+				myRoot.AssemblyLinearVelocity = Vector3.new(flingForce, flingForce, flingForce)
+				myRoot.AssemblyAngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
 
-		if bv.Parent then bv:Destroy() end
-		if bav.Parent then bav:Destroy() end
+				targetRoot.AssemblyLinearVelocity = Vector3.new(flingForce, flingForce, flingForce)
+				targetRoot.AssemblyAngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
 
-		if myRoot.Parent then
-			myRoot.CFrame = savedPos
-			myRoot.AssemblyLinearVelocity = savedVel
-			myRoot.AssemblyAngularVelocity = savedAng
-		end
+				pcall(function()
+					local bv = Instance.new("BodyVelocity")
+					bv.MaxForce = Vector3.one * math.huge
+					bv.P = math.huge
+					bv.Velocity = Vector3.new(flingForce, flingForce, flingForce)
+					bv.Parent = targetRoot
+
+					local bav = Instance.new("BodyAngularVelocity")
+					bav.MaxTorque = Vector3.one * math.huge
+					bav.P = math.huge
+					bav.AngularVelocity = Vector3.new(spinForce, spinForce, spinForce)
+					bav.Parent = targetRoot
+
+					task.delay(0.1, function()
+						if bv.Parent then bv:Destroy() end
+						if bav.Parent then bav:Destroy() end
+					end)
+				end)
+
+				RunService.Heartbeat:Wait()
+			end
+
+			pcall(function()
+				Camera.CameraSubject = savedSubject or myHum
+				Camera.CameraType = savedType or Enum.CameraType.Custom
+			end)
+		end)
+
 		return true
 	end
 
@@ -1339,17 +1406,20 @@ do
 	end
 
 	task.spawn(function()
-		while task.wait(0.5) do
+		while task.wait(0.3) do
 			if Settings.Spectating and currentTarget then
-				local char = currentTarget.Character
-				if not char then
+				if not currentTarget.Parent then
 					Spectate.stop()
+					notify("Spectate: alvo saiu do jogo", "off")
 					if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 				else
-					local hum = char:FindFirstChildOfClass("Humanoid")
-					if not hum or hum.Health <= 0 then
-						Spectate.stop()
-						if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+					local char = currentTarget.Character
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					if char and hum and hum.Health > 0 then
+						if Camera.CameraSubject ~= hum then
+							Camera.CameraSubject = hum
+							Camera.CameraType = Enum.CameraType.Custom
+						end
 					end
 				end
 			end
@@ -1848,7 +1918,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v82"
+title.Text = "Test Toolkit v83"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2534,13 +2604,10 @@ addToggle("Fling Bots", "Fling", "Arremessa bots")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Força", "FlingPower", 500, 5000, 100, 0, "Força")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
-addSection("Fling Player")
-addInfo("Escolha o player e clique em Fling Player.", 30)
+addSection("Fling Player (K1LAS1K)")
+addInfo("Escolha o player e clique em FLING PLAYER.", 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
-addButton("Fling Player (clássico)", "Arremessa o player selecionado (ou tecla B)", function()
-	Fling.flingSelected()
-end)
-addButton("Fling Player (Touch)", "Arremessa o player selecionado pelo método Touch", function()
+addButton("FLING PLAYER (K1LAS1K)", "Arremessa o player selecionado com o método universal", function()
 	local name = Settings.FlingPlayerTarget
 	if not name or name == "Nenhum" then
 		notify("Fling: selecione um player", "off")
@@ -2549,14 +2616,27 @@ addButton("Fling Player (Touch)", "Arremessa o player selecionado pelo método T
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if (plr.DisplayName == name or plr.Name == name) and plr ~= LocalPlayer then
 			task.spawn(function()
-				TouchFling.flingModel(plr.Character)
-				notify("Fling Touch: " .. plr.DisplayName, "on")
+				local ok = Fling.doFlingPlayer(plr)
+				notify(ok and ("Fling: " .. plr.DisplayName) or "Fling: falhou", ok and "on" or "off")
 			end)
 			return
 		end
 	end
 end)
-addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 10, 0.5, 1, "Tempo preso")
+addButton("FLING TODOS OS PLAYERS", "Arremessa TODOS os players do servidor", function()
+	local count = 0
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			task.spawn(function()
+				Fling.doFlingPlayer(plr)
+			end)
+			count = count + 1
+			task.wait(0.1)
+		end
+	end
+	notify("Fling: " .. count .. " players", "on")
+end)
+addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 5, 0.5, 1, "Tempo preso")
 addSection("Touch Fling")
 addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto de você")
 addSlider("Alcance do Touch", "TouchFlingRange", 3, 30, 1, 0, "Studs")
@@ -2747,9 +2827,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v82 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v83 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v82 carregado com sucesso!")
+	print("[TestToolkit] v83 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
