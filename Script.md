@@ -1,7 +1,7 @@
 --[[
-    TestToolkit v89
-    - Fling Bots CORRIGIDO (só o bot voa, você fica parado)
-    - Fling Player K1LAS1K (FallenPartsDestroyHeight + FPos)
+    TestToolkit v90
+    - Fling Bots CORRIGIDO (sem colisão → só o bot voa)
+    - Fling Player Safe + K1LAS1K
     - Botão PARAR FLING
     - Touch Fling corrigido
     - Silent Aim via flick
@@ -123,7 +123,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v89 carregando...")
+bootShow("TestToolkit v90 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM
@@ -517,7 +517,7 @@ local function isLegit() return Settings.UseLegitAim end
 local function isSilent() return Settings.UseSilentAim end
 
 --------------------------------------------------------------------
--- SILENT AIM - FLICK INSTANTÂNEO
+-- SILENT AIM
 --------------------------------------------------------------------
 local mousemoverelFn = nil
 if type(mousemoverel) == "function" then
@@ -1137,7 +1137,7 @@ do
 		myRoot.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
 	end
 
-	-- Loop de fling (só no alvo)
+	-- Loop K1LAS1K
 	local function SFBasePart(BasePart, myRoot, myCharacter, myHumanoid)
 		local TimeToWait = 2
 		local Time = tick()
@@ -1182,7 +1182,7 @@ do
 		until Time + TimeToWait < tick()
 	end
 
-	-- FLING BOT: só o bot voa (você fica parado)
+	-- FLING BOT: só o bot voa (sem colisão, direção oposta ao jogador)
 	local function doFlingBot(targetModel)
 		if not targetModel or not targetModel.Parent then return false end
 		local hum = targetModel:FindFirstChildOfClass("Humanoid")
@@ -1190,29 +1190,52 @@ do
 		local hrp = targetModel:FindFirstChild("HumanoidRootPart")
 		if not hrp then return false end
 
+		local myRoot = getLocalRoot()
+		if not myRoot or not myRoot.Parent then return false end
+
+		-- Salva colisões e desabilita (evita arrastar o jogador)
+		local savedCol = {}
+		for _, part in ipairs(targetModel:GetDescendants()) do
+			if part:IsA("BasePart") then
+				savedCol[part] = part.CanCollide
+				part.CanCollide = false
+			end
+		end
+
+		-- Direção: pra LONGE de você + pra cima
+		local dir = (hrp.Position - myRoot.Position)
+		if dir.Magnitude < 0.5 then
+			dir = -myRoot.CFrame.LookVector
+		end
+		local flyDir = (dir.Unit + Vector3.new(0, 1.5, 0)).Unit
+
+		-- Teleporta ele um pouco pra fora do seu corpo antes de arremessar
+		local offset = flyDir * 3
+		hrp.CFrame = hrp.CFrame + offset
+
 		local bv = Instance.new("BodyVelocity")
 		bv.MaxForce = Vector3.one * math.huge
 		bv.P = math.huge
-		bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+		bv.Velocity = flyDir * 9e7
 		bv.Parent = hrp
 
 		local bav = Instance.new("BodyAngularVelocity")
 		bav.MaxTorque = Vector3.one * math.huge
 		bav.P = math.huge
-		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+		bav.AngularVelocity = Vector3.new(9e6, 9e6, 9e6)
 		bav.Parent = hrp
 
 		task.spawn(function()
-			local endTime = os.clock() + 1.5
+			local endTime = os.clock() + 1
 			while os.clock() < endTime do
 				if not hrp.Parent or not hum.Parent then break end
 				if hum.Health <= 0 then break end
 
-				hrp.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
-				hrp.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
+				hrp.Velocity = flyDir * 9e7
+				hrp.RotVelocity = Vector3.new(9e6, 9e6, 9e6)
 				pcall(function()
-					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
-					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+					bv.Velocity = flyDir * 9e7
+					bav.AngularVelocity = Vector3.new(9e6, 9e6, 9e6)
 				end)
 
 				RunService.Heartbeat:Wait()
@@ -1221,6 +1244,9 @@ do
 			pcall(function()
 				if bv.Parent then bv:Destroy() end
 				if bav.Parent then bav:Destroy() end
+				for part, col in pairs(savedCol) do
+					if part.Parent then part.CanCollide = col end
+				end
 			end)
 		end)
 
@@ -1229,7 +1255,7 @@ do
 
 	Fling.doFlingBot = doFlingBot
 
-	-- FLING PLAYER: método K1LAS1K (camera + FPos)
+	-- FLING PLAYER (K1LAS1K)
 	local function doFlingPlayer(target)
 		if not target or target == LocalPlayer then return false end
 
@@ -1312,6 +1338,72 @@ do
 
 	Fling.doFlingPlayer = doFlingPlayer
 
+	-- FLING PLAYER SAFE: só o alvo voa (sem colisão)
+	Fling.doFlingPlayerSafe = function(target)
+		if not target or target == LocalPlayer then return false end
+
+		local TCharacter
+		if typeof(target) == "Instance" and target:IsA("Model") then
+			TCharacter = target
+		elseif target.Character then
+			TCharacter = target.Character
+		end
+		if not TCharacter then return false end
+
+		local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+		if not THumanoid or THumanoid.Health <= 0 then return false end
+		local TRootPart = TCharacter:FindFirstChild("HumanoidRootPart")
+		if not TRootPart then return false end
+
+		-- Salva colisões
+		local savedCol = {}
+		for _, part in ipairs(TCharacter:GetDescendants()) do
+			if part:IsA("BasePart") then
+				savedCol[part] = part.CanCollide
+				part.CanCollide = false
+			end
+		end
+
+		local bv = Instance.new("BodyVelocity")
+		bv.MaxForce = Vector3.one * math.huge
+		bv.P = math.huge
+		bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+		bv.Parent = TRootPart
+
+		local bav = Instance.new("BodyAngularVelocity")
+		bav.MaxTorque = Vector3.one * math.huge
+		bav.P = math.huge
+		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+		bav.Parent = TRootPart
+
+		task.spawn(function()
+			local endTime = os.clock() + 1.5
+			while os.clock() < endTime do
+				if not TRootPart.Parent or not THumanoid.Parent then break end
+				if THumanoid.Health <= 0 then break end
+
+				TRootPart.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+				TRootPart.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
+				pcall(function()
+					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+				end)
+
+				RunService.Heartbeat:Wait()
+			end
+
+			pcall(function()
+				if bv.Parent then bv:Destroy() end
+				if bav.Parent then bav:Destroy() end
+				for part, col in pairs(savedCol) do
+					if part.Parent then part.CanCollide = col end
+				end
+			end)
+		end)
+
+		return true
+	end
+
 	Fling.flingSelected = function()
 		local name = Settings.FlingPlayerTarget
 		if not name or name == "" or name == "Nenhum" then
@@ -1349,7 +1441,6 @@ do
 				if model ~= LocalPlayer.Character and model.Parent and hum.Parent and hum.Health > 0 then
 					local plr = Players:GetPlayerFromCharacter(model)
 					if not plr then
-						-- NPC: usa o método que SÓ arremessa o bot
 						local r = getRoot(model)
 						if r and (r.Position - myPos).Magnitude <= range then
 							doFlingBot(model)
@@ -1362,7 +1453,7 @@ do
 end
 
 --------------------------------------------------------------------
--- TOUCH FLING (CORRIGIDO)
+-- TOUCH FLING
 --------------------------------------------------------------------
 local TouchFling = {}
 do
@@ -1391,74 +1482,47 @@ do
 		end
 		cooldown[targetRoot] = now
 
-		local Character = LocalPlayer.Character
-		if not Character then return false end
-		local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-		if not Humanoid then return false end
-		local RootPart = Character:FindFirstChild("HumanoidRootPart")
-		if not RootPart then return false end
+		local savedCol = {}
+		for _, part in ipairs(TCharacter:GetDescendants()) do
+			if part:IsA("BasePart") then
+				savedCol[part] = part.CanCollide
+				part.CanCollide = false
+			end
+		end
 
-		local savedCFrame = RootPart.CFrame
-		local savedVelocity = RootPart.Velocity
-		local savedRotVelocity = RootPart.RotVelocity
+		local bv = Instance.new("BodyVelocity")
+		bv.MaxForce = Vector3.one * math.huge
+		bv.P = math.huge
+		bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+		bv.Parent = targetRoot
 
-		local oldFPDH = workspace.FallenPartsDestroyHeight
-		workspace.FallenPartsDestroyHeight = 0/0
-
-		local BV = Instance.new("BodyVelocity")
-		BV.Parent = RootPart
-		BV.Velocity = Vector3.new(0, 0, 0)
-		BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-
-		pcall(function()
-			Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
-		end)
+		local bav = Instance.new("BodyAngularVelocity")
+		bav.MaxTorque = Vector3.one * math.huge
+		bav.P = math.huge
+		bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+		bav.Parent = targetRoot
 
 		task.spawn(function()
-			local FlingActive = true
-			local TimeToWait = 1
-			local Time = tick()
-			local Angle = 0
+			local endTime = os.clock() + 1
+			while os.clock() < endTime do
+				if not targetRoot.Parent or not THumanoid.Parent then break end
+				if THumanoid.Health <= 0 then break end
 
-			repeat
-				if RootPart and Humanoid and targetRoot.Parent then
-					if targetRoot.Velocity.Magnitude < 50 then
-						Angle = Angle + 100
-						RootPart.CFrame = CFrame.new(targetRoot.Position) * CFrame.new(0, 1.5, 0) * CFrame.Angles(math.rad(Angle), 0, 0)
-						RootPart.Velocity = Vector3.new(9e7, 9e8, 9e7)
-						RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-						task.wait()
-						RootPart.CFrame = CFrame.new(targetRoot.Position) * CFrame.new(0, -1.5, 0) * CFrame.Angles(math.rad(Angle), 0, 0)
-						RootPart.Velocity = Vector3.new(9e7, 9e8, 9e7)
-						RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-						task.wait()
-					else
-						RootPart.CFrame = CFrame.new(targetRoot.Position) * CFrame.new(0, 1.5, 0) * CFrame.Angles(math.rad(90), 0, 0)
-						RootPart.Velocity = Vector3.new(9e7, 9e8, 9e7)
-						RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-						task.wait()
-						RootPart.CFrame = CFrame.new(targetRoot.Position) * CFrame.new(0, -1.5, 0)
-						RootPart.Velocity = Vector3.new(9e7, 9e8, 9e7)
-						RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
-						task.wait()
-					end
-				end
-			until Time + TimeToWait < tick()
+				targetRoot.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+				targetRoot.RotVelocity = Vector3.new(9e9, 9e9, 9e9)
+				pcall(function()
+					bv.Velocity = Vector3.new(9e9, 9e9 * 10, 9e9)
+					bav.AngularVelocity = Vector3.new(9e9, 9e9, 9e9)
+				end)
+
+				RunService.Heartbeat:Wait()
+			end
 
 			pcall(function()
-				if BV.Parent then BV:Destroy() end
-				workspace.FallenPartsDestroyHeight = oldFPDH
-
-				if RootPart and RootPart.Parent then
-					RootPart.CFrame = savedCFrame
-					RootPart.Velocity = savedVelocity
-					RootPart.RotVelocity = savedRotVelocity
-				end
-
-				if Humanoid and Humanoid.Parent then
-					Humanoid.PlatformStand = false
-					Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-					Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				if bv.Parent then bv:Destroy() end
+				if bav.Parent then bav:Destroy() end
+				for part, col in pairs(savedCol) do
+					if part.Parent then part.CanCollide = col end
 				end
 			end)
 		end)
@@ -1702,7 +1766,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- ESP (somente Highlight + nome + hp + tracer)
+-- ESP
 --------------------------------------------------------------------
 local espRoot = Instance.new("Frame")
 espRoot.Name = "ESP"
@@ -2061,7 +2125,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v89"
+title.Text = "Test Toolkit v90"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2746,13 +2810,29 @@ addSlider("Transparência do menu", "MenuAlpha", 0, 0.6, 0.05, 2, "0 = sólido")
 
 newPage("fling", "Fling")
 addSection("Fling Bots")
-addToggle("Fling Bots", "Fling", "Arremessa bots próximos")
+addToggle("Fling Bots", "Fling", "Arremessa bots próximos (sem te afetar)")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
-addSection("Fling Player (K1LAS1K)")
-addInfo("Escolha o player e clique em FLING PLAYER.", 30)
+addSection("Fling Player")
+addInfo("Escolha o player e clique em um botão.", 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
-addButton("FLING PLAYER (K1LAS1K)", "Arremessa usando FallenPartsDestroyHeight + FPos", function()
+addButton("FLING PLAYER (SAFE)", "Só o alvo voa — você fica parado", function()
+	local name = Settings.FlingPlayerTarget
+	if not name or name == "Nenhum" then
+		notify("Fling: selecione um player", "off")
+		return
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if (plr.Name == name or plr.DisplayName == name) and plr ~= LocalPlayer then
+			task.spawn(function()
+				local ok = Fling.doFlingPlayerSafe(plr)
+				notify(ok and ("Fling Safe: " .. plr.DisplayName) or "Fling: falhou", ok and "on" or "off")
+			end)
+			return
+		end
+	end
+end)
+addButton("FLING PLAYER (K1LAS1K)", "Arremessa VOCÊ + alvo juntos (mais forte)", function()
 	local name = Settings.FlingPlayerTarget
 	if not name or name == "Nenhum" then
 		notify("Fling: selecione um player", "off")
@@ -2768,29 +2848,28 @@ addButton("FLING PLAYER (K1LAS1K)", "Arremessa usando FallenPartsDestroyHeight +
 		end
 	end
 end)
-addButton("PARAR FLING", "Para o fling e volta pra posição original", function()
+addButton("PARAR FLING", "Para o K1LAS1K e volta pra posição original", function()
 	if Fling.flingActive then
 		Fling.stopFling()
 	else
-		notify("Fling não está ativo", "off")
+		notify("Fling K1LAS1K não está ativo", "off")
 	end
 end)
-addButton("FLING TODOS OS PLAYERS", "Arremessa TODOS os players do servidor", function()
+addButton("FLING TODOS (SAFE)", "Só os alvos voam — você fica parado", function()
 	local count = 0
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and plr.Character then
 			task.spawn(function()
-				Fling.doFlingPlayer(plr)
+				Fling.doFlingPlayerSafe(plr)
 			end)
 			count = count + 1
 			task.wait(0.1)
 		end
 	end
-	notify("Fling: " .. count .. " players", "on")
+	notify("Fling Safe: " .. count .. " players", "on")
 end)
-addSlider("Duração (segundos)", "FlingPlayerDuration", 0.5, 5, 0.5, 1, "Tempo preso")
 addSection("Touch Fling")
-addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto de você")
+addToggle("Touch Fling", "TouchFling", "Arremessa quem chegar perto (sem te afetar)")
 addSlider("Alcance do Touch", "TouchFlingRange", 3, 30, 1, 0, "Studs")
 addKeybind("Tecla do Touch Fling", "TouchFlingKey", "Liga/desliga Touch Fling")
 addSection("Spectate")
@@ -2979,9 +3058,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v89 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v90 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v89 carregado com sucesso!")
+	print("[TestToolkit] v90 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
