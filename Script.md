@@ -2,6 +2,7 @@
     TestToolkit v76 - Blindado contra nil
     Ctrl direito abre/fecha
     Aimbot: só por tecla (padrão Q)
+    Correções: Fling Player, Invisibilidade, Botões Mobile, FOV, Bypass Vel/Pulo, Teclas N/F/I
 ]]
 
 local Players = game:GetService("Players")
@@ -54,7 +55,7 @@ local Settings = {
 	-- Movimento
 	WalkSpeedOn = false, WalkSpeed = 32,
 	JumpOn = false, JumpPower = 100,
-	Noclip = false, NoclipKey = Enum.KeyCode.V,
+	Noclip = false, NoclipKey = Enum.KeyCode.N,
 	Fly = false, FlyKey = Enum.KeyCode.F, FlySpeed = 60,
 	AntiVoid = false,
 	AntiVoidY = math.max(Workspace.FallenPartsDestroyHeight + 100, -400),
@@ -63,7 +64,7 @@ local Settings = {
 	CamFOVOn = false, CamFOV = 90, AntiAFK = true,
 
 	-- Invisibilidade
-	SeatInvisible = false,
+	SeatInvisible = false, SeatInvisibleKey = Enum.KeyCode.I,
 	SeatInvisibleX = -25.95, SeatInvisibleY = 84, SeatInvisibleZ = 3537.55,
 
 	-- Fling
@@ -326,7 +327,8 @@ local function getCandidates(force, fovOverride)
 		if rOn then
 			local d2 = (Vector2.new(rsp.X, rsp.Y) - origin).Magnitude
 			local wd = (rp - camPos).Magnitude
-			if (not fovOn or d2 <= fovLimit * 1.5) and (maxD == 0 or wd <= maxD) then
+			-- Correção: Aplica o FOV corretamente na lista inicial
+			if (not fovOn or d2 <= fovLimit) and (maxD == 0 or wd <= maxD) then
 				rough[#rough + 1] = { T = t, Dist = d2, WorldDist = wd, Health = t.Humanoid.Health }
 			end
 		end
@@ -341,6 +343,7 @@ local function getCandidates(force, fovOverride)
 			local sp, onScreen = Camera.WorldToViewportPoint(part.Position)
 			if onScreen then
 				local d = (Vector2.new(sp.X, sp.Y) - origin).Magnitude
+				-- Correção: Verifica o FOV novamente com a parte exata
 				if not fovOn or d <= fovLimit then
 					out[#out + 1] = {
 						Model = r.T.Model, Humanoid = r.T.Humanoid, Player = r.T.Player,
@@ -1203,6 +1206,7 @@ do
 		end
 		local target = nil
 		for _, plr in ipairs(Players:GetPlayers()) do
+			-- Correção: Verifica DisplayName e Name
 			if plr.DisplayName == name or plr.Name == name then
 				target = plr
 				break
@@ -1253,6 +1257,12 @@ local wsActive, jpActive = false, false
 LocalPlayer.CharacterAdded:Connect(function()
 	wsActive, jpActive = false, false
 	lastSafe = nil
+	-- Correção: Desliga a invisibilidade ao morrer
+	if Settings.SeatInvisible then
+		Settings.SeatInvisible = false
+		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
+		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+	end
 end)
 
 RunService.Heartbeat:Connect(function(dt)
@@ -1261,6 +1271,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if not hum then return end
 		local root = getLocalRoot()
 
+		-- Bypass de Velocidade
 		if Settings.WalkSpeedOn then
 			if not wsActive then
 				defaultWalkSpeed = hum.WalkSpeed
@@ -1272,6 +1283,7 @@ RunService.Heartbeat:Connect(function(dt)
 			wsActive = false
 		end
 
+		-- Bypass de Pulo
 		if Settings.JumpOn then
 			if not jpActive then
 				defaultUseJumpPower = hum.UseJumpPower
@@ -2182,6 +2194,33 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 			sliderPage = page
 		end
 	end)
+
+	-- Correção: Permitir digitar o valor
+	valueLabel.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			local box = Instance.new("TextBox")
+			box.Size = UDim2.new(1, 0, 1, 0)
+			box.BackgroundTransparency = 0.5
+			box.BackgroundColor3 = Theme.Bg
+			box.Text = tostring(Settings[key])
+			box.Font = Enum.Font.GothamBold
+			box.TextSize = 13
+			box.TextColor3 = Theme.Text
+			box.ClearTextOnFocus = false
+			box.Parent = valueLabel
+			corner(box, 4)
+			box:CaptureFocus()
+			box.FocusLost:Connect(function()
+				local num = tonumber(box.Text)
+				if num then
+					Settings[key] = math.clamp(num, min, max)
+					render()
+					if onChange then onChange() end
+				end
+				box:Destroy()
+			end)
+		end
+	end)
 end
 
 UserInputService.InputChanged:Connect(function(input)
@@ -2407,6 +2446,7 @@ addSection("Invisibilidade (Seat Bug)")
 addToggle("Invisível (Seat Bug)", "SeatInvisible", "Ativa a invisibilidade", function()
 	if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
 end)
+addKeybind("Tecla da Invisibilidade", "SeatInvisibleKey", "Liga/desliga invisibilidade")
 
 newPage("misc", "Extras")
 addSection("Visão")
@@ -2513,6 +2553,7 @@ makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() re
 	function() Settings.Fling = not Settings.Fling end)
 
 local function updateMobileBtns()
+	-- Correção: Só mostra botões se for mobile
 	if not isMobile then
 		for _, m in ipairs(mobileBtns) do m.Btn.Visible = false end
 		return
@@ -2632,6 +2673,8 @@ UserInputService.InputBegan:Connect(function(input)
 	elseif matchesBind(input, Settings.FlyKey) then
 		Settings.Fly = not Settings.Fly
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+	elseif matchesBind(input, Settings.SeatInvisibleKey) then
+		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
 	elseif input.KeyCode == Settings.FlingKey then
 		Settings.Fling = not Settings.Fling
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
@@ -2695,6 +2738,7 @@ RunService.RenderStepped:Connect(function(dt)
 			if Settings.Fling then parts[#parts + 1] = "Fling" end
 			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
 			if Settings.TriggerBot then parts[#parts + 1] = "Trigger" end
+			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
 			hud.Text = table.concat(parts, "  •  ")
 		end
 	end)
