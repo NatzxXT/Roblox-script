@@ -1,9 +1,10 @@
 --[[
-    TestToolkit v97.8
-    - Fix voo: cai normal ao desativar (não fica em gravidade lunar)
-    - Trigger bot mobile: usa Tool:Activate() (não afeta controles)
-    - Trigger bot PC: mouse simulation normal
-    - Aimbot, team check aprimorado, ESP highlight, mouse fix, botões arrastáveis
+    TestToolkit v97.9
+    - HUD: abaixo da topbar, auto-size, arrastável
+    - Fix voo: cai normal ao desativar
+    - Trigger bot mobile: Tool:Activate() (não afeta controles)
+    - Trigger bot PC: mouse simulation
+    - Aimbot, team check, ESP, mouse fix, botões arrastáveis
 ]]
 
 local Players = game:GetService("Players")
@@ -76,7 +77,7 @@ local Settings = {
 
 	MENU_KEY = Enum.KeyCode.RightControl,
 
-	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
+	ShowHUD = true, HUDX = 10, HUDY = 40, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1,
 
 	MobileBtnSize = 64, MobileBtnAlpha = 0.15,
@@ -127,7 +128,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.8 carregando...")
+bootShow("TestToolkit v97.9 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -875,8 +876,6 @@ local function destroyFly()
 		local hum = getLocalHumanoid()
 		if hum and hum.Parent then
 			hum.PlatformStand = false
-			-- Sai do estado "Physics" (que o PlatformStand ativa).
-			-- Sem isso, a gravidade fica reduzida e o player cai devagar.
 			pcall(function()
 				if hum.FloorMaterial ~= Enum.Material.Air then
 					hum:ChangeState(Enum.HumanoidStateType.Running)
@@ -886,8 +885,6 @@ local function destroyFly()
 			end)
 			local root = getLocalRoot()
 			if root and root.Parent then
-				-- NÃO zera velocidade vertical → gravidade age naturalmente.
-				-- Zera só a rotação pra não ficar girando no ar.
 				root.AssemblyAngularVelocity = Vector3.zero
 			end
 		end
@@ -1446,7 +1443,6 @@ local wsActive, jpActive = false, false
 LocalPlayer.CharacterAdded:Connect(function()
 	wsActive, jpActive = false, false
 	lastSafe = nil
-	-- Reset do voo (limpa recursos antigos do char que morreu)
 	destroyFly()
 	if Settings.SeatInvisible then
 		Settings.SeatInvisible = false
@@ -1905,7 +1901,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.8"
+title.Text = "Test Toolkit v97.9"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2923,9 +2919,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.8 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.9 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.8 carregado com sucesso!")
+	print("[TestToolkit] v97.9 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2982,7 +2978,8 @@ end)
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
 hud.Position = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
-hud.Size = UDim2.fromOffset(1000, 20)
+hud.Size = UDim2.fromOffset(0, 22)
+hud.AutomaticSize = Enum.AutomaticSize.X
 hud.BackgroundColor3 = Theme.Bg
 hud.BackgroundTransparency = 0.25
 hud.BorderSizePixel = 0
@@ -2997,7 +2994,51 @@ hud.Parent = gui
 corner(hud, 6)
 local hudPad = Instance.new("UIPadding")
 hudPad.PaddingLeft = UDim.new(0, 8)
+hudPad.PaddingRight = UDim.new(0, 8)
 hudPad.Parent = hud
+
+-- Drag do HUD (só funciona quando HUDEdit está ligado)
+do
+	local hDrag, hStart, hPos = false, nil, nil
+	hud.InputBegan:Connect(function(input)
+		if not Settings.HUDEdit then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			hDrag = true
+			hStart = input.Position
+			hPos = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if not hDrag then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			local d = input.Position - hStart
+			local nx = hPos.X.Offset + d.X
+			local ny = hPos.Y.Offset + d.Y
+			Settings.HUDX = nx
+			Settings.HUDY = ny
+			hud.Position = UDim2.fromOffset(nx, ny)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			hDrag = false
+		end
+	end)
+
+	-- Ativa o Active só enquanto o HUDEdit está ligado
+	task.spawn(function()
+		local lastEdit = false
+		while task.wait(0.1) do
+			if Settings.HUDEdit ~= lastEdit then
+				lastEdit = Settings.HUDEdit
+				hud.Active = Settings.HUDEdit
+			end
+		end
+	end)
+end
 
 local fpsFrames, fpsAcc, hudAcc = 0, 0, 0
 local lastFps = 60
@@ -3037,7 +3078,7 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 			if Settings.TouchFling then parts[#parts + 1] = "💥 TouchFling" end
 			if Settings.Spectating then parts[#parts + 1] = "👁 " .. tostring(Settings.SpectateTarget) end
-			hud.Text = table.concat(parts, "  •  ")
+			hud.Text = " " .. table.concat(parts, "  •  ") .. " "
 		end
 	end)
 end)
