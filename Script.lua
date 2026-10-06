@@ -1,11 +1,14 @@
+TestToolkit v97.5 — botões mobile arrastáveis
+
+```lua
 --[[
-    TestToolkit v97.3 (Mobile Fix)
+    TestToolkit v97.5
     - Trigger bot (qualquer parte do corpo, delay 0)
     - Aimbot (câmera lock) com FOV, smooth, LOS
     - Team check aprimorado (cache + Neutral + amigos + forcefield)
     - ESP apenas Highlight (sem barra de vida)
     - Mouse fix: não trava cursor ao fechar o menu
-    - Mobile fix: botões somem/atualizam, player anda/pula normal
+    - Botões mobile arrastáveis (sem toggle)
     - Fling Bots + Fling Player Safe + K1LAS1K + Touch Fling + Spectate
 ]]
 
@@ -85,6 +88,14 @@ local Settings = {
 	MobileBtnSize = 64, MobileBtnAlpha = 0.15,
 	ShowBtnFly = true, ShowBtnNoclip = true,
 	ShowBtnEsp = true, ShowBtnFling = true,
+
+	MobileBtnPos = {
+		TT     = UDim2.fromScale(0.07, 0.20),
+		VOO    = UDim2.fromScale(0.90, 0.42),
+		NOCLIP = UDim2.fromScale(0.90, 0.54),
+		ESP    = UDim2.fromScale(0.80, 0.66),
+		FLING  = UDim2.fromScale(0.80, 0.78),
+	},
 }
 
 --------------------------------------------------------------------
@@ -122,7 +133,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.3 carregando...")
+bootShow("TestToolkit v97.5 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK (aprimorado)
@@ -413,7 +424,6 @@ local function stroke(obj, color, transparency, thickness)
 	return s
 end
 
--- FOV circles (não capturam input)
 local triggerFovCircle = Instance.new("Frame")
 triggerFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 triggerFovCircle.BackgroundTransparency = 1
@@ -434,7 +444,6 @@ aimFovCircle.Parent = gui
 corner(aimFovCircle, 9999)
 stroke(aimFovCircle, Color3.fromRGB(80, 255, 130), 0.35, 1.5)
 
--- Toasts (não capturam input)
 local toastHolder = Instance.new("Frame")
 toastHolder.AnchorPoint = Vector2.new(1, 1)
 toastHolder.Position = UDim2.new(1, -16, 1, -16)
@@ -547,7 +556,6 @@ end
 if LocalPlayer.Character then trackMyCharacter(LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(trackMyCharacter)
 
--- NOCLIP
 local noclipTouched = setmetatable({}, { __mode = "k" })
 local noclipWasOn = false
 RunService.Stepped:Connect(function()
@@ -651,7 +659,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 --------------------------------------------------------------------
--- AIMBOT (câmera lock)
+-- AIMBOT
 --------------------------------------------------------------------
 local aimHoldActive = false
 local aimTarget = nil
@@ -1875,7 +1883,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.3"
+title.Text = "Test Toolkit v97.5"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2607,26 +2615,30 @@ if isMobile then
 	addSection("Aparência")
 	addSlider("Tamanho dos botões", "MobileBtnSize", 48, 100, 2, 0, "Pixels")
 	addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
+	addSection("Dica")
+	addInfo("Os botões podem ser arrastados pela tela. Toque rápido para ativar; arraste para reposicionar.", 42)
 end
 
 --------------------------------------------------------------------
--- BOTÕES MOBILE (v97.3 — com dot + sombra + toque animado)
+-- BOTÕES MOBILE (v97.5 — arrastáveis)
 --------------------------------------------------------------------
 local mobileBtns = {}
+local DRAG_THRESHOLD = 10
 
 local function applyMobileBtnStyle(m)
+	if not m or not m.Btn or not m.Btn.Parent then return end
 	local b = m.Btn
-	if not b or not b.Parent then return end
-	local on = m.State and m.State() or false
+	local on = false
+	pcall(function() on = m.State and m.State() or false end)
 	local sz = Settings.MobileBtnSize
 	b.Size = UDim2.fromOffset(sz, sz)
 	b.BackgroundTransparency = Settings.MobileBtnAlpha
 	b.BackgroundColor3 = on and Theme.Accent or Theme.Bg
 
-	local strokeObj = b:FindFirstChildOfClass("UIStroke")
-	if strokeObj then
-		strokeObj.Color = on and Color3.fromRGB(255, 255, 255) or Theme.Accent
-		strokeObj.Transparency = on and 0.3 or 0.2
+	local s = b:FindFirstChildOfClass("UIStroke")
+	if s then
+		s.Color = on and Color3.fromRGB(255, 255, 255) or Theme.Accent
+		s.Transparency = on and 0.3 or 0.2
 	end
 
 	local dot = b:FindFirstChild("StateDot")
@@ -2640,10 +2652,14 @@ local function applyMobileBtnStyle(m)
 	end
 end
 
-local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
+local function makeMobileBtn(key, label, posKey, showKey, stateFn, onTap)
+	local defaultPos = Settings.MobileBtnPos and Settings.MobileBtnPos[posKey]
+	local startPos = defaultPos or UDim2.fromScale(0.5, 0.5)
+
 	local b = Instance.new("TextButton")
+	b.Name = "MobileBtn_" .. tostring(key)
 	b.AnchorPoint = Vector2.new(0.5, 0.5)
-	b.Position = pos
+	b.Position = startPos
 	b.Size = UDim2.fromOffset(56, 56)
 	b.BackgroundColor3 = Theme.Bg
 	b.BorderSizePixel = 0
@@ -2651,8 +2667,8 @@ local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	b.Text = ""
 	b.Visible = false
 	b.ZIndex = 40
-	b.Active = true
-	b.Selectable = false
+	pcall(function() b.Active = true end)
+	pcall(function() b.Selectable = false end)
 	b.Parent = gui
 	corner(b, 9999)
 	stroke(b, Theme.Accent, 0.2, 1.5)
@@ -2681,76 +2697,125 @@ local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	dot.Parent = b
 	corner(dot, 9999)
 
-	local shadow = Instance.new("ImageLabel")
-	shadow.BackgroundTransparency = 1
-	shadow.Image = "rbxassetid://5028857084"
-	shadow.ImageColor3 = Color3.new(0, 0, 0)
-	shadow.ImageTransparency = 0.6
-	shadow.ScaleType = Enum.ScaleType.Slice
-	shadow.SliceCenter = Rect.new(24, 24, 276, 276)
-	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	shadow.Position = UDim2.fromScale(0.5, 0.5)
-	shadow.Size = UDim2.new(1, 20, 1, 20)
-	shadow.ZIndex = 39
-	shadow.Parent = b
+	local dragging = false
+	local wasDrag = false
+	local dragStart = nil
+	local startPosDrag = nil
+	local activeInputType = nil
 
 	b.InputBegan:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		if input.UserInputType ~= Enum.UserInputType.Touch
+			and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		dragging = true
+		wasDrag = false
+		dragStart = input.Position
+		startPosDrag = b.Position
+		activeInputType = input.UserInputType
+
 		tween(b, {
 			BackgroundTransparency = math.max(Settings.MobileBtnAlpha - 0.15, 0),
 			Size = UDim2.fromOffset(Settings.MobileBtnSize - 4, Settings.MobileBtnSize - 4),
 		}, 0.08)
-		if onDown then onDown() end
 	end)
-	b.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			tween(b, {
-				BackgroundTransparency = Settings.MobileBtnAlpha,
-				Size = UDim2.fromOffset(Settings.MobileBtnSize, Settings.MobileBtnSize),
-			}, 0.12)
-			if onUp then onUp() end
-			task.defer(function()
-				applyMobileBtnStyle({ Btn = b, State = stateFn })
-			end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		local ok = (input.UserInputType == Enum.UserInputType.Touch
+			and activeInputType == Enum.UserInputType.Touch)
+			or (input.UserInputType == Enum.UserInputType.MouseMovement
+			and activeInputType == Enum.UserInputType.MouseButton1)
+		if not ok then return end
+
+		local delta = input.Position - dragStart
+		if not wasDrag and delta.Magnitude > DRAG_THRESHOLD then
+			wasDrag = true
+		end
+		if wasDrag then
+			local newX = startPosDrag.X.Offset + delta.X
+			local newY = startPosDrag.Y.Offset + delta.Y
+			b.Position = UDim2.new(startPosDrag.X.Scale, newX, startPosDrag.Y.Scale, newY)
 		end
 	end)
 
-	local entry = { Btn = b, ShowKey = showKey, State = stateFn }
+	UserInputService.InputEnded:Connect(function(input)
+		if not dragging then return end
+		local ok = (input.UserInputType == Enum.UserInputType.Touch
+			and activeInputType == Enum.UserInputType.Touch)
+			or (input.UserInputType == Enum.UserInputType.MouseButton1
+			and activeInputType == Enum.UserInputType.MouseButton1)
+		if not ok then return end
+
+		dragging = false
+		activeInputType = nil
+
+		tween(b, {
+			BackgroundTransparency = Settings.MobileBtnAlpha,
+			Size = UDim2.fromOffset(Settings.MobileBtnSize, Settings.MobileBtnSize),
+		}, 0.12)
+
+		if wasDrag then
+			local vp = Camera.ViewportSize
+			local half = Settings.MobileBtnSize / 2
+			local px = b.AbsolutePosition.X + b.AbsoluteSize.X / 2
+			local py = b.AbsolutePosition.Y + b.AbsoluteSize.Y / 2
+			px = math.clamp(px, half + 4, vp.X - half - 4)
+			py = math.clamp(py, half + 4, vp.Y - half - 4)
+			b.Position = UDim2.fromOffset(px, py)
+			if Settings.MobileBtnPos then
+				Settings.MobileBtnPos[posKey] = b.Position
+			end
+		else
+			if onTap then
+				pcall(onTap)
+			end
+			applyMobileBtnStyle({ Btn = b, State = stateFn })
+		end
+		wasDrag = false
+	end)
+
+	local entry = { Btn = b, ShowKey = showKey, State = stateFn, Key = key }
 	mobileBtns[#mobileBtns + 1] = entry
 	applyMobileBtnStyle(entry)
 	return entry
 end
 
-makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil,
+makeMobileBtn("tt", "TT",
+	"TT", nil,
 	function() return menuOpen end,
 	function()
 		if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
 	end)
 
-makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.42), "ShowBtnFly",
+makeMobileBtn("fly", "VOO",
+	"VOO", "ShowBtnFly",
 	function() return Settings.Fly end,
 	function() Settings.Fly = not Settings.Fly end)
 
-makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.54), "ShowBtnNoclip",
+makeMobileBtn("noclip", "NOCLIP",
+	"NOCLIP", "ShowBtnNoclip",
 	function() return Settings.Noclip end,
 	function() Settings.Noclip = not Settings.Noclip end)
 
-makeMobileBtn("ESP", UDim2.fromScale(0.8, 0.66), "ShowBtnEsp",
+makeMobileBtn("esp", "ESP",
+	"ESP", "ShowBtnEsp",
 	function() return Settings.ESP end,
 	function() Settings.ESP = not Settings.ESP end)
 
-makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling",
+makeMobileBtn("fling", "FLING",
+	"FLING", "ShowBtnFling",
 	function() return Settings.Fling end,
 	function() Settings.Fling = not Settings.Fling end)
 
 local function updateMobileBtns()
 	if not isMobile then
-		for _, m in ipairs(mobileBtns) do m.Btn.Visible = false end
+		for _, m in ipairs(mobileBtns) do
+			if m.Btn then m.Btn.Visible = false end
+		end
 		return
 	end
 	for _, m in ipairs(mobileBtns) do
 		local show = m.ShowKey == nil or Settings[m.ShowKey]
-		m.Btn.Visible = show
+		if m.Btn then m.Btn.Visible = show end
 		if show then
 			applyMobileBtnStyle(m)
 		end
@@ -2761,7 +2826,6 @@ layoutTabs()
 selectTab("trigger", true)
 updateMobileBtns()
 
--- Loop de atualização dos botões mobile (garante que somem/apareçam)
 task.spawn(function()
 	while task.wait(0.1) do
 		pcall(updateMobileBtns)
@@ -2780,7 +2844,6 @@ local function baseScale()
 	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
 end
 
--- MOUSE FIX: não salva/restaura MouseBehavior
 local function setMenu(open)
 	menuOpen = open
 	local s = baseScale()
@@ -2832,9 +2895,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.3 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.5 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.3 carregado com sucesso!")
+	print("[TestToolkit] v97.5 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2950,3 +3013,20 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end)
 end)
+```
+
+Como usar os botões arrastáveis
+
+Ação O que acontece
+Toque rápido Ativa/desativa a função (VOO, NOCLIP, ESP, FLING) ou abre o menu (TT)
+Toque + arrastar Move o botão pela tela
+Soltar Salva a nova posição (durante a sessão)
+Arrastar pra fora Botão é empurrado pra dentro automaticamente
+
+Detalhes
+
+· DRAG_THRESHOLD = 10 px: menos que isso = toque, mais = arrasto. Se errar muito, mude para 15.
+· Feedback visual: botão encolhe 4px enquanto você segura (tanto pra tocar quanto pra arrastar).
+· Dot de estado: bolinha no canto — verde quando ativo, cinza quando inativo.
+· Sem toggle nas configs: arrasta direto, sem precisar ativar nada. Adicionei uma seção Dica na aba Botões explicando isso.
+· Posições padrão ficam na tabela Settings.MobileBtnPos — se quiser mudar onde eles começam, edite ali.
