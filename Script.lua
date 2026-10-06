@@ -1,12 +1,11 @@
 --[[
-    TestToolkit v97.6
-    - Trigger bot (qualquer parte do corpo, delay 0)
-    - Trigger bot mobile: usa toque virtual (não esconde controles)
+    TestToolkit v97.7
+    - Trigger bot mobile: usa Tool:Activate() (não afeta controles de toque)
+    - Trigger bot PC: mouse simulation normal
     - Aimbot (câmera lock) com FOV, smooth, LOS
     - Team check aprimorado (cache + Neutral + amigos + forcefield)
-    - ESP apenas Highlight (sem barra de vida)
-    - Mouse fix: não trava cursor ao fechar o menu
-    - Botões mobile arrastáveis (sem toggle)
+    - ESP apenas Highlight
+    - Mouse fix + botões mobile arrastáveis
     - Fling Bots + Fling Player Safe + K1LAS1K + Touch Fling + Spectate
 ]]
 
@@ -26,25 +25,6 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 end)
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-
---------------------------------------------------------------------
--- KEEPER MOBILE: mantém controles de toque visíveis
--- (evita que o trigger bot esconda joystick/botão de pulo)
---------------------------------------------------------------------
-if isMobile then
-	task.spawn(function()
-		while task.wait(0.1) do
-			pcall(function()
-				if UserInputService.MouseEnabled then
-					UserInputService.MouseEnabled = false
-				end
-				if UserInputService.MouseIconEnabled then
-					UserInputService.MouseIconEnabled = false
-				end
-			end)
-		end
-	end)
-end
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -150,7 +130,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.6 carregando...")
+bootShow("TestToolkit v97.7 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -606,19 +586,25 @@ local function isTriggerActive()
 	return Settings.TriggerBotAlways or triggerHoldActive
 end
 
--- SIMULATE CLICK (mobile: usa toque virtual pra não esconder controles)
+-- SIMULATE CLICK
+-- Mobile: NUNCA toca em input de mouse (senão esconde os controles).
+-- 1) Tenta ativar a Tool equipada (método mais seguro)
+-- 2) Senão, usa VirtualUser:ClickButton1 (touch virtual)
+-- PC: clique normal de mouse
 local function simulateClick()
 	if isMobile then
+		local char = LocalPlayer.Character
+		if char then
+			local tool = char:FindFirstChildOfClass("Tool")
+			if tool then
+				pcall(function() tool:Activate() end)
+				return
+			end
+		end
 		pcall(function()
 			VirtualUser:CaptureController()
 			local vp = Camera.ViewportSize
 			VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
-		end)
-		pcall(function()
-			local vp = Camera.ViewportSize
-			VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 1)
-			task.wait(0.005)
-			VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 1)
 		end)
 	else
 		local mouse = LocalPlayer:GetMouse()
@@ -678,16 +664,6 @@ RunService.RenderStepped:Connect(function()
 	triggerBotActive = true
 	lastTriggerShot = now
 	simulateClick()
-
-	-- Reforça controles mobile após o clique
-	if isMobile then
-		task.defer(function()
-			pcall(function()
-				UserInputService.MouseEnabled = false
-				UserInputService.MouseIconEnabled = false
-			end)
-		end)
-	end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -1925,7 +1901,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.6"
+title.Text = "Test Toolkit v97.7"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2943,9 +2919,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.6 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.7 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.6 carregado com sucesso!")
+	print("[TestToolkit] v97.7 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
