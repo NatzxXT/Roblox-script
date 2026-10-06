@@ -1,9 +1,10 @@
 --[[
-    TestToolkit v99.0
+    TestToolkit v99.1
+    - Hitbox Expander com Team Check dedicado
+    - Restauração imediata ao trocar de time
     - Sistema de idioma PT / EN
     - Save / Load / Reset de config
     - Nova aba "Config"
-    - (todas as funções da v98.0 mantidas)
 ]]
 
 local Players = game:GetService("Players")
@@ -49,6 +50,9 @@ local Settings = {
 
 	HitboxExpander = false, HitboxSize = 6, HitboxRange = 200,
 	HitboxInvisible = false,
+	HitboxTeamCheck = true,
+	HitboxIgnoreFriends = true,
+	HitboxIgnoreForcefield = true,
 	ExpandHead = true, ExpandTorso = true, ExpandUpperTorso = true, ExpandLowerTorso = false,
 
 	WalkSpeedOn = false, WalkSpeed = 32,
@@ -96,7 +100,7 @@ local Settings = {
 }
 
 --------------------------------------------------------------------
--- CONFIG PADRÃO (snapshot profundo)
+-- CONFIG PADRÃO
 --------------------------------------------------------------------
 local function deepCopy(v)
 	if type(v) ~= "table" then return v end
@@ -110,15 +114,13 @@ local DefaultSettings = deepCopy(Settings)
 -- SISTEMA DE IDIOMA
 --------------------------------------------------------------------
 local Lang = {
-	pt = {}, -- PT é o idioma nativo: o fallback retorna a própria string
+	pt = {},
 	en = {
-		-- Abas
 		["Trigger"] = "Trigger", ["Aim"] = "Aim", ["Hitbox"] = "Hitbox",
 		["ESP"] = "ESP", ["Jogador"] = "Player", ["Extras"] = "Misc",
 		["Fling"] = "Fling", ["Segurança"] = "Security", ["Botões"] = "Buttons",
 		["Config"] = "Config",
 
-		-- Seções
 		["Trigger Bot"] = "Trigger Bot",
 		["Alvos"] = "Targets",
 		["Team Check"] = "Team Check",
@@ -148,7 +150,6 @@ local Lang = {
 		["Resetar"] = "Reset",
 		["Sobre"] = "About",
 
-		-- Opções
 		["Sempre ativo"] = "Always active",
 		["Só visíveis"] = "Only visible",
 		["FOV do Trigger"] = "Trigger FOV",
@@ -163,6 +164,8 @@ local Lang = {
 		["Suavidade"] = "Smoothness",
 		["Tecla do aim"] = "Aim key",
 		["Invisível"] = "Invisible",
+		["Não expande em aliados"] = "Doesn't expand on allies",
+		["Não expande em amigos"] = "Doesn't expand on friends",
 		["Tamanho"] = "Size",
 		["Alcance"] = "Range",
 		["Cabeça"] = "Head",
@@ -218,7 +221,6 @@ local Lang = {
 		["Botão FLING"] = "FLING Button",
 		["Tamanho dos botões"] = "Button size",
 
-		-- Descrições
 		["Atira automaticamente"] = "Auto fires",
 		["Sem precisar segurar a tecla"] = "No key needed",
 		["Só atira com LOS"] = "Only fires with LOS",
@@ -294,7 +296,6 @@ local Lang = {
 		["Restaura todas as configurações para o padrão."] = "Restores all settings to default.",
 		["Escolha o idioma da interface."] = "Choose the interface language.",
 
-		-- Botões
 		["FLING PLAYER (SAFE)"] = "FLING PLAYER (SAFE)",
 		["FLING PLAYER (K1LAS1K)"] = "FLING PLAYER (K1LAS1K)",
 		["PARAR FLING"] = "STOP FLING",
@@ -305,7 +306,6 @@ local Lang = {
 		["Carregar Config"] = "Load Config",
 		["Resetar Config"] = "Reset Config",
 
-		-- Ciclos / valores
 		["Jogadores"] = "Players",
 		["Bots"] = "Bots",
 		["Ambos"] = "Both",
@@ -318,7 +318,6 @@ local Lang = {
 		["Português"] = "Portuguese",
 		["English"] = "English",
 
-		-- Notificações
 		["Anti Void: trazido de volta"] = "Anti Void: brought back",
 		["Fling parado"] = "Fling stopped",
 		["Spectate: alvo saiu do jogo"] = "Spectate: target left the game",
@@ -347,7 +346,6 @@ local function T(key)
 end
 _G.TT_T = T
 
--- Sistema de refresh dos textos ao trocar de idioma
 local langBindings = {}
 local function bindLang(obj, key, suffixFn)
 	if not obj then return end
@@ -400,7 +398,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v99.0 carregando...")
+bootShow("TestToolkit v99.1 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -1041,14 +1039,19 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 --------------------------------------------------------------------
--- HITBOX
+-- HITBOX (com TEAM CHECK dedicado)
 --------------------------------------------------------------------
 local HitboxExpander = {}
 do
 	local savedProps = setmetatable({}, { __mode = "k" })
 	local function savePart(part)
 		if savedProps[part] then return end
-		savedProps[part] = { Size = part.Size, CanCollide = part.CanCollide, Massless = part.Massless, Transparency = part.Transparency }
+		savedProps[part] = {
+			Size = part.Size,
+			CanCollide = part.CanCollide,
+			Massless = part.Massless,
+			Transparency = part.Transparency,
+		}
 	end
 	local function restorePart(part)
 		local props = savedProps[part]
@@ -1061,12 +1064,44 @@ do
 		end)
 		savedProps[part] = nil
 	end
+
 	local PART_KEYS = {
 		{ "Head", "ExpandHead" },
 		{ "UpperTorso", "ExpandUpperTorso" },
 		{ "Torso", "ExpandTorso" },
 		{ "LowerTorso", "ExpandLowerTorso" },
 	}
+
+	-- ============================================================
+	-- TEAM CHECK DEDICADO AO HITBOX
+	-- ============================================================
+	local function isHitboxTarget(player)
+		if not player or player == LocalPlayer then return false end
+		if not Settings.HitboxTeamCheck then return true end
+
+		local info = getInfo(player)
+
+		if Settings.HitboxIgnoreFriends and info.isFriend then
+			return false
+		end
+
+		if Settings.HitboxIgnoreForcefield then
+			local char = player.Character
+			if char and char:FindFirstChildOfClass("ForceField") then
+				return false
+			end
+		end
+
+		if info.neutral then return true end
+
+		local myInfo = getInfo(LocalPlayer)
+		if myInfo.team and info.team and myInfo.team == info.team then
+			return false
+		end
+
+		return true
+	end
+
 	local function expandPlayer(player)
 		local char = player.Character
 		if not char then return end
@@ -1088,6 +1123,7 @@ do
 			end
 		end
 	end
+
 	local function restorePlayer(player)
 		local char = player.Character
 		if not char then return end
@@ -1096,17 +1132,22 @@ do
 			if part and part:IsA("BasePart") then restorePart(part) end
 		end
 	end
+
 	local function shouldExpand(player)
 		local char = player.Character
 		if not char then return false end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum or hum.Health <= 0 then return false end
+
+		if not isHitboxTarget(player) then return false end
+
 		local myRoot = getLocalRoot()
 		local theirRoot = getRoot(char)
 		if not myRoot or not theirRoot then return false end
 		local dist = (theirRoot.Position - myRoot.Position).Magnitude
 		return dist <= math.max(10, Settings.HitboxRange or 200)
 	end
+
 	local lastApply = 0
 	local function step()
 		if not Settings.HitboxExpander then
@@ -1124,7 +1165,38 @@ do
 			end
 		end
 	end
+
+	-- ============================================================
+	-- RESTAURAÇÃO IMEDIATA AO MUDAR DE TIME
+	-- ============================================================
+	local function watchPlayer(plr)
+		if plr == LocalPlayer then return end
+		local function checkNow()
+			if not Settings.HitboxExpander then return end
+			if not shouldExpand(plr) then restorePlayer(plr) end
+		end
+		plr:GetPropertyChangedSignal("Team"):Connect(checkNow)
+		plr:GetPropertyChangedSignal("Neutral"):Connect(checkNow)
+		plr:GetPropertyChangedSignal("TeamColor"):Connect(checkNow)
+	end
+	for _, plr in ipairs(Players:GetPlayers()) do watchPlayer(plr) end
+	Players.PlayerAdded:Connect(watchPlayer)
+
+	local function onMyTeamChanged()
+		if not Settings.HitboxExpander then return end
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer and not shouldExpand(plr) then
+				restorePlayer(plr)
+			end
+		end
+	end
+	LocalPlayer:GetPropertyChangedSignal("Team"):Connect(onMyTeamChanged)
+	LocalPlayer:GetPropertyChangedSignal("Neutral"):Connect(onMyTeamChanged)
+	LocalPlayer:GetPropertyChangedSignal("TeamColor"):Connect(onMyTeamChanged)
+
 	HitboxExpander.step = step
+	HitboxExpander.isHitboxTarget = isHitboxTarget
+	HitboxExpander.restorePlayer = restorePlayer
 end
 
 task.spawn(function()
@@ -1706,7 +1778,7 @@ end
 _G.TT_Spectate = Spectate
 
 --------------------------------------------------------------------
--- CONFIG MANAGER (save / load / reset)
+-- CONFIG MANAGER
 --------------------------------------------------------------------
 local ConfigManager = {}
 _G.TT_Config = ConfigManager
@@ -1717,7 +1789,6 @@ local function fileApiAvailable()
 	return type(writefile) == "function" and type(readfile) == "function"
 end
 
--- Serialização de tipos Roblox especiais
 local function serializeValue(v)
 	local t = typeof(v)
 	if t == "EnumItem" then
@@ -2299,7 +2370,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v99.0"
+title.Text = "Test Toolkit v99.1"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2536,17 +2607,6 @@ local function addSection(textKey)
 	l.TextColor3 = Theme.Accent
 	l.Text = string.upper(T(textKey))
 	l.Parent = holder
-	bindLang(l, textKey, function() return "" end)
-	-- aplicar upper após T
-	local oldBind = langBindings[#langBindings]
-	oldBind.obj = l
-	oldBind.key = textKey
-	oldBind.suffix = function() return "" end
-	-- Reaplica com upper manualmente
-	l.Text = string.upper(T(textKey))
-	holder:GetPropertyChangedSignal("Parent"):Connect(function() end)
-	-- Fallback: substituímos o binding por um custom refresh
-	-- (mais simples: registrar um refresh extra)
 	refreshers[#refreshers + 1] = function() l.Text = string.upper(T(textKey)) end
 	return holder
 end
@@ -2912,6 +2972,10 @@ addToggle("Hitbox Expander", "HitboxExpander", "Aumenta a hitbox")
 addToggle("Invisível", "HitboxInvisible", "Hitbox transparente")
 addSlider("Tamanho", "HitboxSize", 5, 30, 1, 0, "Studs")
 addSlider("Alcance", "HitboxRange", 10, 1000, 10, 0, "Distância máxima")
+addSection("Team Check")
+addToggle("Team Check", "HitboxTeamCheck", "Não expande em aliados")
+addToggle("Ignorar amigos", "HitboxIgnoreFriends", "Não expande em amigos")
+addToggle("Ignorar forcefield", "HitboxIgnoreForcefield", "Pula spawn protection")
 addSection("Partes")
 addToggle("Cabeça", "ExpandHead", "")
 addToggle("Torso (R6)", "ExpandTorso", "")
@@ -3063,7 +3127,7 @@ if isMobile then
 end
 
 --------------------------------------------------------------------
--- ABA CONFIG (NOVO)
+-- ABA CONFIG
 --------------------------------------------------------------------
 newPage("config", "Config")
 addSection("Configurações")
@@ -3118,7 +3182,7 @@ do
 	end)
 end
 addSection("Sobre")
-addInfo("TestToolkit v99.0 • " .. (isMobile and "Mobile" or "PC") .. "\n" ..
+addInfo("TestToolkit v99.1 • " .. (isMobile and "Mobile" or "PC") .. "\n" ..
 	(fileApiAvailable() and "File API: OK" or "File API: indisponível (save/load off)"), 48)
 
 --------------------------------------------------------------------
@@ -3404,9 +3468,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v99.0 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v99.1 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v99.0 carregado com sucesso!")
+	print("[TestToolkit] v99.1 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -3458,7 +3522,7 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 --------------------------------------------------------------------
--- HUD (centralizado no topo)
+-- HUD
 --------------------------------------------------------------------
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
