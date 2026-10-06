@@ -1,12 +1,15 @@
+TestToolkit v97.3 — completo com fix mobile
+
+```lua
 --[[
-    TestToolkit v97.2
+    TestToolkit v97.3 (Mobile Fix)
     - Trigger bot (qualquer parte do corpo, delay 0)
     - Aimbot (câmera lock) com FOV, smooth, LOS
     - Team check aprimorado (cache + Neutral + amigos + forcefield)
     - ESP apenas Highlight (sem barra de vida)
     - Mouse fix: não trava cursor ao fechar o menu
-    - Fling Bots + Fling Player Safe + K1LAS1K
-    - Touch Fling + Spectate
+    - Mobile fix: botões somem/atualizam, player anda/pula normal
+    - Fling Bots + Fling Player Safe + K1LAS1K + Touch Fling + Spectate
 ]]
 
 local Players = game:GetService("Players")
@@ -82,7 +85,7 @@ local Settings = {
 	ShowHUD = true, HUDX = 10, HUDY = 10, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1,
 
-	MobileBtnSize = 56, MobileBtnAlpha = 0.15,
+	MobileBtnSize = 64, MobileBtnAlpha = 0.15,
 	ShowBtnFly = true, ShowBtnNoclip = true,
 	ShowBtnEsp = true, ShowBtnFling = true,
 }
@@ -122,7 +125,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.2 carregando...")
+bootShow("TestToolkit v97.3 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK (aprimorado)
@@ -168,18 +171,15 @@ Players.PlayerAdded:Connect(hookPlayer)
 Players.PlayerRemoving:Connect(function(plr) teamCache[plr] = nil end)
 
 local function isEnemy(model, plr)
-	-- NPC / bot sem Player
 	if not plr then return true end
 	if plr == LocalPlayer then return false end
 
 	local info = getInfo(plr)
 
-	-- Amigo (opcional)
 	if Settings.IgnoreFriends and info.isFriend then
 		return false
 	end
 
-	-- Spawn protection / forcefield (opcional)
 	if Settings.IgnoreForcefield then
 		local char = plr.Character
 		if char and char:FindFirstChildOfClass("ForceField") then
@@ -187,19 +187,15 @@ local function isEnemy(model, plr)
 		end
 	end
 
-	-- Neutral flag (Roblox: neutral = não aliado = inimigo em modo time)
 	if info.neutral then
 		return true
 	end
 
 	local myInfo = getInfo(LocalPlayer)
-
-	-- Ambos têm time → compara
 	if myInfo.team and info.team then
 		return myInfo.team ~= info.team
 	end
 
-	-- Sem sistema de time no jogo → FFA → todos inimigos
 	return true
 end
 
@@ -343,7 +339,6 @@ local function getAimOrigin()
 	return UserInputService:GetMouseLocation()
 end
 
--- Partes do corpo usadas pelo trigger bot (R6 + R15)
 local TRIGGER_BODY_PARTS = {
 	"Head",
 	"UpperTorso", "LowerTorso", "Torso",
@@ -367,7 +362,6 @@ local function getBodyParts(model)
 	return parts
 end
 
--- Team check explícito (redundância — getTargets já filtra)
 local function isEnemyTarget(t)
 	if not t then return false end
 	if not t.Player then return true end
@@ -422,30 +416,36 @@ local function stroke(obj, color, transparency, thickness)
 	return s
 end
 
+-- FOV circles (não capturam input)
 local triggerFovCircle = Instance.new("Frame")
 triggerFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 triggerFovCircle.BackgroundTransparency = 1
+triggerFovCircle.Active = false
+triggerFovCircle.Selectable = false
 triggerFovCircle.Parent = gui
 corner(triggerFovCircle, 9999)
 stroke(triggerFovCircle, Color3.fromRGB(255, 100, 100), 0.4, 1.5)
 
--- Círculo do FOV do aimbot
 local aimFovCircle = Instance.new("Frame")
 aimFovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
 aimFovCircle.BackgroundTransparency = 1
 aimFovCircle.Visible = false
 aimFovCircle.ZIndex = 55
+aimFovCircle.Active = false
+aimFovCircle.Selectable = false
 aimFovCircle.Parent = gui
 corner(aimFovCircle, 9999)
 stroke(aimFovCircle, Color3.fromRGB(80, 255, 130), 0.35, 1.5)
 
--- Toasts
+-- Toasts (não capturam input)
 local toastHolder = Instance.new("Frame")
 toastHolder.AnchorPoint = Vector2.new(1, 1)
 toastHolder.Position = UDim2.new(1, -16, 1, -16)
 toastHolder.Size = UDim2.fromOffset(280, 320)
 toastHolder.BackgroundTransparency = 1
 toastHolder.ZIndex = 60
+toastHolder.Active = false
+toastHolder.Selectable = false
 toastHolder.Parent = gui
 local toastLayout = Instance.new("UIListLayout")
 toastLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
@@ -470,6 +470,8 @@ local function notify(text, kind)
 	row.Size = UDim2.new(1, 0, 0, 34)
 	row.BackgroundTransparency = 1
 	row.ZIndex = 60
+	row.Active = false
+	row.Selectable = false
 	row.Parent = toastHolder
 	local card = Instance.new("Frame")
 	card.Size = UDim2.fromScale(1, 1)
@@ -478,6 +480,8 @@ local function notify(text, kind)
 	card.BackgroundTransparency = 0.08
 	card.BorderSizePixel = 0
 	card.ZIndex = 60
+	card.Active = false
+	card.Selectable = false
 	card.Parent = row
 	corner(card, 8)
 	stroke(card, color, 0.55, 1)
@@ -639,7 +643,6 @@ RunService.RenderStepped:Connect(function()
 	simulateClick()
 end)
 
--- FOV visual do trigger
 RunService.RenderStepped:Connect(function()
 	local show = isTriggerActive()
 	triggerFovCircle.Visible = show
@@ -715,7 +718,6 @@ local function findAimTarget()
 end
 
 RunService.RenderStepped:Connect(function(dt)
-	-- Círculo de FOV
 	local show = Settings.AimBot and Settings.AimBotShowFOV
 		and not (_G.TT_isMenuOpen and _G.TT_isMenuOpen())
 	aimFovCircle.Visible = show
@@ -730,7 +732,6 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end
 
-	-- Lock de câmera
 	if not isAimActive() then
 		aimTarget, aimTargetName = nil, "nenhum"
 		return
@@ -1553,6 +1554,9 @@ espRoot.Name = "ESP"
 espRoot.Size = UDim2.fromScale(1, 1)
 espRoot.BackgroundTransparency = 1
 espRoot.ZIndex = 1
+espRoot.Active = false
+espRoot.Selectable = false
+pcall(function() espRoot.Interactable = false end)
 espRoot.Parent = gui
 
 local ALLY_COLOR = Color3.fromRGB(80, 190, 255)
@@ -1564,6 +1568,8 @@ local function mkFrame(parent, round)
 	f.BorderSizePixel = 0
 	f.Visible = false
 	f.ZIndex = 1
+	f.Active = false
+	f.Selectable = false
 	f.Parent = parent
 	if round then corner(f, 9999) end
 	return f
@@ -1579,6 +1585,8 @@ local function mkText(parent, size)
 	l.Size = UDim2.fromOffset(220, 14)
 	l.Visible = false
 	l.ZIndex = 5
+	l.Active = false
+	l.Selectable = false
 	l.Parent = parent
 	return l
 end
@@ -1598,6 +1606,8 @@ local function newEsp(model)
 	holder.Size = UDim2.fromScale(1, 1)
 	holder.Visible = false
 	holder.ZIndex = 1
+	holder.Active = false
+	holder.Selectable = false
 	holder.Parent = espRoot
 	o.Holder = holder
 	o.Name = mkText(holder, 13)
@@ -1868,7 +1878,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.2"
+title.Text = "Test Toolkit v97.3"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2598,14 +2608,41 @@ if isMobile then
 	addToggle("Botão ESP", "ShowBtnEsp", "")
 	addToggle("Botão FLING", "ShowBtnFling", "")
 	addSection("Aparência")
-	addSlider("Tamanho dos botões", "MobileBtnSize", 40, 90, 1, 0, "Pixels")
+	addSlider("Tamanho dos botões", "MobileBtnSize", 48, 100, 2, 0, "Pixels")
 	addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 end
 
 --------------------------------------------------------------------
--- BOTÕES MOBILE
+-- BOTÕES MOBILE (v97.3 — com dot + sombra + toque animado)
 --------------------------------------------------------------------
 local mobileBtns = {}
+
+local function applyMobileBtnStyle(m)
+	local b = m.Btn
+	if not b or not b.Parent then return end
+	local on = m.State and m.State() or false
+	local sz = Settings.MobileBtnSize
+	b.Size = UDim2.fromOffset(sz, sz)
+	b.BackgroundTransparency = Settings.MobileBtnAlpha
+	b.BackgroundColor3 = on and Theme.Accent or Theme.Bg
+
+	local strokeObj = b:FindFirstChildOfClass("UIStroke")
+	if strokeObj then
+		strokeObj.Color = on and Color3.fromRGB(255, 255, 255) or Theme.Accent
+		strokeObj.Transparency = on and 0.3 or 0.2
+	end
+
+	local dot = b:FindFirstChild("StateDot")
+	if dot then
+		dot.BackgroundColor3 = on and Theme.Good or Theme.SubText
+	end
+
+	local lbl = b:FindFirstChild("Label")
+	if lbl then
+		lbl.TextColor3 = on and Color3.new(1, 1, 1) or Theme.Text
+	end
+end
+
 local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	local b = Instance.new("TextButton")
 	b.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -2614,31 +2651,100 @@ local function makeMobileBtn(label, pos, showKey, stateFn, onDown, onUp)
 	b.BackgroundColor3 = Theme.Bg
 	b.BorderSizePixel = 0
 	b.AutoButtonColor = false
-	b.Font = Enum.Font.GothamBold
-	b.TextSize = 11
-	b.TextColor3 = Theme.Text
-	b.Text = tostring(label or "")
+	b.Text = ""
 	b.Visible = false
 	b.ZIndex = 40
+	b.Active = true
+	b.Selectable = false
 	b.Parent = gui
 	corner(b, 9999)
 	stroke(b, Theme.Accent, 0.2, 1.5)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Label"
+	lbl.BackgroundTransparency = 1
+	lbl.AnchorPoint = Vector2.new(0.5, 0.5)
+	lbl.Position = UDim2.new(0.5, 0, 0.5, 0)
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 11
+	lbl.TextColor3 = Theme.Text
+	lbl.Text = tostring(label or "")
+	lbl.ZIndex = 41
+	lbl.Parent = b
+
+	local dot = Instance.new("Frame")
+	dot.Name = "StateDot"
+	dot.AnchorPoint = Vector2.new(1, 0)
+	dot.Position = UDim2.new(1, -6, 0, 6)
+	dot.Size = UDim2.fromOffset(8, 8)
+	dot.BackgroundColor3 = Theme.SubText
+	dot.BorderSizePixel = 0
+	dot.ZIndex = 42
+	dot.Parent = b
+	corner(dot, 9999)
+
+	local shadow = Instance.new("ImageLabel")
+	shadow.BackgroundTransparency = 1
+	shadow.Image = "rbxassetid://5028857084"
+	shadow.ImageColor3 = Color3.new(0, 0, 0)
+	shadow.ImageTransparency = 0.6
+	shadow.ScaleType = Enum.ScaleType.Slice
+	shadow.SliceCenter = Rect.new(24, 24, 276, 276)
+	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+	shadow.Position = UDim2.fromScale(0.5, 0.5)
+	shadow.Size = UDim2.new(1, 20, 1, 20)
+	shadow.ZIndex = 39
+	shadow.Parent = b
+
 	b.InputBegan:Connect(function(input)
 		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		tween(b, {
+			BackgroundTransparency = math.max(Settings.MobileBtnAlpha - 0.15, 0),
+			Size = UDim2.fromOffset(Settings.MobileBtnSize - 4, Settings.MobileBtnSize - 4),
+		}, 0.08)
 		if onDown then onDown() end
 	end)
 	b.InputEnded:Connect(function(input)
-		if (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) and onUp then onUp() end
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			tween(b, {
+				BackgroundTransparency = Settings.MobileBtnAlpha,
+				Size = UDim2.fromOffset(Settings.MobileBtnSize, Settings.MobileBtnSize),
+			}, 0.12)
+			if onUp then onUp() end
+			task.defer(function()
+				applyMobileBtnStyle({ Btn = b, State = stateFn })
+			end)
+		end
 	end)
-	mobileBtns[#mobileBtns + 1] = { Btn = b, ShowKey = showKey, State = stateFn }
+
+	local entry = { Btn = b, ShowKey = showKey, State = stateFn }
+	mobileBtns[#mobileBtns + 1] = entry
+	applyMobileBtnStyle(entry)
+	return entry
 end
-makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil, function() return menuOpen end, function()
-	if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
-end)
-makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.42), "ShowBtnFly", function() return Settings.Fly end, function() Settings.Fly = not Settings.Fly end)
-makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.54), "ShowBtnNoclip", function() return Settings.Noclip end, function() Settings.Noclip = not Settings.Noclip end)
-makeMobileBtn("ESP", UDim2.fromScale(0.8, 0.66), "ShowBtnEsp", function() return Settings.ESP end, function() Settings.ESP = not Settings.ESP end)
-makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling", function() return Settings.Fling end, function() Settings.Fling = not Settings.Fling end)
+
+makeMobileBtn("TT", UDim2.fromScale(0.07, 0.2), nil,
+	function() return menuOpen end,
+	function()
+		if _G.TT_setMenu then _G.TT_setMenu(not _G.TT_isMenuOpen()) end
+	end)
+
+makeMobileBtn("VOO", UDim2.fromScale(0.9, 0.42), "ShowBtnFly",
+	function() return Settings.Fly end,
+	function() Settings.Fly = not Settings.Fly end)
+
+makeMobileBtn("NOCLIP", UDim2.fromScale(0.9, 0.54), "ShowBtnNoclip",
+	function() return Settings.Noclip end,
+	function() Settings.Noclip = not Settings.Noclip end)
+
+makeMobileBtn("ESP", UDim2.fromScale(0.8, 0.66), "ShowBtnEsp",
+	function() return Settings.ESP end,
+	function() Settings.ESP = not Settings.ESP end)
+
+makeMobileBtn("FLING", UDim2.fromScale(0.8, 0.78), "ShowBtnFling",
+	function() return Settings.Fling end,
+	function() Settings.Fling = not Settings.Fling end)
 
 local function updateMobileBtns()
 	if not isMobile then
@@ -2649,10 +2755,7 @@ local function updateMobileBtns()
 		local show = m.ShowKey == nil or Settings[m.ShowKey]
 		m.Btn.Visible = show
 		if show then
-			local sz = Settings.MobileBtnSize
-			if m.Btn.Size.X.Offset ~= sz then m.Btn.Size = UDim2.fromOffset(sz, sz) end
-			m.Btn.BackgroundTransparency = Settings.MobileBtnAlpha
-			m.Btn.BackgroundColor3 = m.State() and Theme.Accent or Theme.Bg
+			applyMobileBtnStyle(m)
 		end
 	end
 end
@@ -2661,8 +2764,16 @@ layoutTabs()
 selectTab("trigger", true)
 updateMobileBtns()
 
+-- Loop de atualização dos botões mobile (garante que somem/apareçam)
+task.spawn(function()
+	while task.wait(0.1) do
+		pcall(updateMobileBtns)
+	end
+end)
+
 local function refreshAll()
 	for _, refresh in ipairs(refreshers) do refresh() end
+	pcall(updateMobileBtns)
 end
 uiRefresh = refreshAll
 _G.TT_uiRefresh = refreshAll
@@ -2672,7 +2783,7 @@ local function baseScale()
 	return math.clamp(math.min(vp.X / 470, vp.Y / 590), 0.5, 1)
 end
 
--- MOUSE FIX: não salva/restaura MouseBehavior (evita travar cursor)
+-- MOUSE FIX: não salva/restaura MouseBehavior
 local function setMenu(open)
 	menuOpen = open
 	local s = baseScale()
@@ -2724,9 +2835,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.2 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.3 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.2 carregado com sucesso!")
+	print("[TestToolkit] v97.3 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2792,6 +2903,8 @@ hud.TextSize = 12
 hud.TextColor3 = Theme.Text
 hud.TextXAlignment = Enum.TextXAlignment.Left
 hud.ZIndex = 30
+hud.Active = false
+hud.Selectable = false
 hud.Parent = gui
 corner(hud, 6)
 local hudPad = Instance.new("UIPadding")
@@ -2840,3 +2953,22 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end)
 end)
+```
+
+O que mudou na v97.3
+
+Bug Fix aplicado
+Botões não somem updateMobileBtns() agora roda num loop a cada 0.1s + é chamado dentro do refreshAll()
+Botões feios Novo design: label central, dot de estado no canto, sombra suave, animação de toque (encolhe + escurece)
+Player não anda/pula espRoot, toastHolder, triggerFovCircle, aimFovCircle e hud ganharam Active = false + Selectable = false (e espRoot ainda tenta Interactable = false). Isso impede que qualquer overlay invisível capture os toques/movimento do joystick mobile.
+Botão TT Continua abrindo/fechando menu; agora com dot verde quando aberto
+Tamanho padrão MobileBtnSize = 64 (antes 56) pra facilitar toques
+Slider de tamanho Agora de 48 a 100 (antes 40 a 90), step 2
+
+Ordem de teste no mobile:
+
+1. Roda o script
+2. Anda e pula normal — se ainda não andar, me avisa
+3. Abre o menu pelo botão TT
+4. Aba Botões → desliga "Botão ESP" → deve sumir na hora
+5. Aba Botões → arrasta o slider "Tamanho dos botões" → todos devem redimensionar em tempo real
