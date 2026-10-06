@@ -1,10 +1,9 @@
 --[[
-    TestToolkit v99.1
-    - Hitbox Expander com Team Check dedicado
-    - Restauração imediata ao trocar de time
+    TestToolkit v99.2
+    - Hitbox Expander multi-rig + auto-detect + compat system + team check
     - Sistema de idioma PT / EN
     - Save / Load / Reset de config
-    - Nova aba "Config"
+    - Aba "Config"
 ]]
 
 local Players = game:GetService("Players")
@@ -53,6 +52,13 @@ local Settings = {
 	HitboxTeamCheck = true,
 	HitboxIgnoreFriends = true,
 	HitboxIgnoreForcefield = true,
+	HitboxMode = 1,
+	HitboxIncludeHRP = false,
+	HitboxMassless = true,
+	HitboxRefreshRate = 0.05,
+	HitboxCompat = 2,
+	HitboxAntiRevert = true,
+	HitboxCaseInsensitive = true,
 	ExpandHead = true, ExpandTorso = true, ExpandUpperTorso = true, ExpandLowerTorso = false,
 
 	WalkSpeedOn = false, WalkSpeed = 32,
@@ -149,6 +155,7 @@ local Lang = {
 		["Persistência"] = "Persistence",
 		["Resetar"] = "Reset",
 		["Sobre"] = "About",
+		["Compatibilidade"] = "Compatibility",
 
 		["Sempre ativo"] = "Always active",
 		["Só visíveis"] = "Only visible",
@@ -220,6 +227,30 @@ local Lang = {
 		["Botão ESP"] = "ESP Button",
 		["Botão FLING"] = "FLING Button",
 		["Tamanho dos botões"] = "Button size",
+
+		["Modo"] = "Mode",
+		["Auto"] = "Auto",
+		["Básico"] = "Basic",
+		["Completo"] = "Full",
+		["Tudo"] = "Everything",
+		["O que expandir"] = "What to expand",
+		["Incluir HRP"] = "Include HRP",
+		["Também expande o root part"] = "Also expands root part",
+		["Massless"] = "Massless",
+		["Remove massa das partes"] = "Removes mass from parts",
+		["Refresh"] = "Refresh",
+		["Menor = mais agressivo"] = "Lower = more aggressive",
+		["Modo compat"] = "Compat mode",
+		["Padrão"] = "Default",
+		["Agressivo"] = "Aggressive",
+		["Soldado"] = "Welded",
+		["Híbrido"] = "Hybrid",
+		["Estratégia de aplicação"] = "Apply strategy",
+		["Anti-revert"] = "Anti-revert",
+		["Reaplica se o jogo resetar"] = "Reapplies if game resets",
+		["Case-insensitive"] = "Case-insensitive",
+		["Aceita 'head', '_Head', etc."] = "Accepts 'head', '_Head', etc.",
+		["Partes (Modos Básico/Completo)"] = "Parts (Basic/Full mode)",
 
 		["Atira automaticamente"] = "Auto fires",
 		["Sem precisar segurar a tecla"] = "No key needed",
@@ -398,7 +429,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v99.1 carregando...")
+bootShow("TestToolkit v99.2 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -1039,11 +1070,17 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 --------------------------------------------------------------------
--- HITBOX (com TEAM CHECK dedicado)
+-- HITBOX (multi-rig + auto-detect + compat system + team check)
 --------------------------------------------------------------------
 local HitboxExpander = {}
 do
 	local savedProps = setmetatable({}, { __mode = "k" })
+	local sizeHooks = setmetatable({}, { __mode = "k" })
+	local weldedParts = setmetatable({}, { __mode = "k" })
+	local revertCount = setmetatable({}, { __mode = "k" })
+
+	local COLLIDER_NAME = "_hbx_collider"
+
 	local function savePart(part)
 		if savedProps[part] then return end
 		savedProps[part] = {
@@ -1053,7 +1090,20 @@ do
 			Transparency = part.Transparency,
 		}
 	end
+
+	local function removeCollider(part)
+		if weldedParts[part] then
+			pcall(function() weldedParts[part]:Destroy() end)
+			weldedParts[part] = nil
+		end
+	end
+
 	local function restorePart(part)
+		if sizeHooks[part] then
+			pcall(function() sizeHooks[part]:Disconnect() end)
+			sizeHooks[part] = nil
+		end
+		removeCollider(part)
 		local props = savedProps[part]
 		if not props then return end
 		pcall(function()
@@ -1063,73 +1113,238 @@ do
 			part.Transparency = props.Transparency
 		end)
 		savedProps[part] = nil
+		revertCount[part] = nil
 	end
 
-	local PART_KEYS = {
-		{ "Head", "ExpandHead" },
-		{ "UpperTorso", "ExpandUpperTorso" },
-		{ "Torso", "ExpandTorso" },
-		{ "LowerTorso", "ExpandLowerTorso" },
+	local ATTR_KEYS = { "IsHitbox", "Hitbox", "isHitbox", "HBX", "HitboxPart" }
+
+	local function hasHitboxAttr(part)
+		for _, k in ipairs(ATTR_KEYS) do
+			if part:GetAttribute(k) == true then return true end
+		end
+		return false
+	end
+
+	local function findPartByName(char, name)
+		local p = char:FindFirstChild(name)
+		if p and p:IsA("BasePart") then return p end
+		if not Settings.HitboxCaseInsensitive then return nil end
+		local lower = string.lower(name)
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and d.Name ~= COLLIDER_NAME then
+				local n = string.lower(d.Name)
+				if n == lower then return d end
+				n = n:gsub("^_+", ""):gsub("_hitbox$", ""):gsub("_hb$", "")
+				if n == lower then return d end
+			end
+		end
+		return nil
+	end
+
+	local function getAttrHitboxes(char)
+		local list = {}
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and d.Name ~= COLLIDER_NAME and hasHitboxAttr(d) then
+				list[#list + 1] = d
+			end
+		end
+		return list
+	end
+
+	local BASIC_NAMES = { "Head", "Torso", "UpperTorso", "LowerTorso" }
+	local R6_LIMBS = { "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
+	local R15_LIMBS = {
+		"LeftUpperArm", "LeftLowerArm", "LeftHand",
+		"RightUpperArm", "RightLowerArm", "RightHand",
+		"LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+		"RightUpperLeg", "RightLowerLeg", "RightFoot",
 	}
 
-	-- ============================================================
-	-- TEAM CHECK DEDICADO AO HITBOX
-	-- ============================================================
+	local function detectRig(model)
+		if model:FindFirstChild("UpperTorso") and model:FindFirstChild("LowerTorso") then return "R15"
+		elseif model:FindFirstChild("Torso") then return "R6" end
+		return "custom"
+	end
+
+	local function getPartNames(char)
+		local mode = Settings.HitboxMode or 1
+		local names = {}
+		if mode == 1 then
+			local rig = detectRig(char)
+			if rig == "R15" then
+				names[#names + 1] = "Head"
+				names[#names + 1] = "UpperTorso"
+				names[#names + 1] = "LowerTorso"
+				for _, n in ipairs(R15_LIMBS) do names[#names + 1] = n end
+			elseif rig == "R6" then
+				names[#names + 1] = "Head"
+				names[#names + 1] = "Torso"
+				for _, n in ipairs(R6_LIMBS) do names[#names + 1] = n end
+			else
+				for _, n in ipairs(BASIC_NAMES) do names[#names + 1] = n end
+			end
+		elseif mode == 2 then
+			if Settings.ExpandHead then names[#names + 1] = "Head" end
+			if Settings.ExpandTorso then names[#names + 1] = "Torso" end
+			if Settings.ExpandUpperTorso then names[#names + 1] = "UpperTorso" end
+			if Settings.ExpandLowerTorso then names[#names + 1] = "LowerTorso" end
+		elseif mode == 3 then
+			if Settings.ExpandHead then names[#names + 1] = "Head" end
+			if Settings.ExpandTorso then names[#names + 1] = "Torso" end
+			if Settings.ExpandUpperTorso then names[#names + 1] = "UpperTorso" end
+			if Settings.ExpandLowerTorso then names[#names + 1] = "LowerTorso" end
+			for _, n in ipairs(R6_LIMBS) do names[#names + 1] = n end
+			for _, n in ipairs(R15_LIMBS) do names[#names + 1] = n end
+		end
+		return names
+	end
+
 	local function isHitboxTarget(player)
 		if not player or player == LocalPlayer then return false end
 		if not Settings.HitboxTeamCheck then return true end
-
 		local info = getInfo(player)
-
-		if Settings.HitboxIgnoreFriends and info.isFriend then
-			return false
-		end
-
+		if Settings.HitboxIgnoreFriends and info.isFriend then return false end
 		if Settings.HitboxIgnoreForcefield then
 			local char = player.Character
-			if char and char:FindFirstChildOfClass("ForceField") then
-				return false
-			end
+			if char and char:FindFirstChildOfClass("ForceField") then return false end
 		end
-
 		if info.neutral then return true end
-
 		local myInfo = getInfo(LocalPlayer)
-		if myInfo.team and info.team and myInfo.team == info.team then
-			return false
-		end
-
+		if myInfo.team and info.team and myInfo.team == info.team then return false end
 		return true
 	end
 
-	local function expandPlayer(player)
-		local char = player.Character
-		if not char then return end
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health <= 0 then return end
-		for _, entry in ipairs(PART_KEYS) do
-			if Settings[entry[2]] then
-				local part = char:FindFirstChild(entry[1])
-				if part and part:IsA("BasePart") then
-					savePart(part)
-					local size = Settings.HitboxSize
-					pcall(function()
-						part.Size = Vector3.new(size, size, size)
-						part.CanCollide = false
-						part.Massless = true
-						part.Transparency = Settings.HitboxInvisible and 1 or 0.5
-					end)
+	local function hookSize(part, targetVec)
+		if sizeHooks[part] then return end
+		sizeHooks[part] = part:GetPropertyChangedSignal("Size"):Connect(function()
+			if not Settings.HitboxExpander then return end
+			if not part.Parent then return end
+			if (part.Size - targetVec).Magnitude > 0.15 then
+				local rc = revertCount[part]
+				if not rc then rc = { n = 0, t = os.clock() }; revertCount[part] = rc end
+				if os.clock() - rc.t > 2 then rc.n = 0; rc.t = os.clock() end
+				rc.n += 1
+				pcall(function() part.Size = targetVec end)
+			end
+		end)
+	end
+
+	local function makeWeldedCollider(hostPart, size)
+		local existing = weldedParts[hostPart]
+		if existing and existing.Parent then
+			existing.Size = Vector3.new(size, size, size)
+			existing.CFrame = hostPart.CFrame
+			return existing
+		end
+		local p = Instance.new("Part")
+		p.Name = COLLIDER_NAME
+		p.Size = Vector3.new(size, size, size)
+		p.CanCollide = false
+		p.CanQuery = true
+		p.CanTouch = true
+		p.Massless = true
+		p.Transparency = 1
+		p.Anchored = false
+		p.CFrame = hostPart.CFrame
+		p.Parent = hostPart.Parent
+		pcall(function()
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = hostPart
+			weld.Part1 = p
+			weld.Parent = p
+		end)
+		weldedParts[hostPart] = p
+		return p
+	end
+
+	local function applySize(part)
+		if not part or not part.Parent then return end
+		if part.Name == COLLIDER_NAME then return end
+		if part.Anchored then return end
+
+		savePart(part)
+		local size = Settings.HitboxSize
+		local targetVec = Vector3.new(size, size, size)
+		local compat = Settings.HitboxCompat or 1
+
+		if compat ~= 3 and compat ~= 4 then
+			removeCollider(part)
+		end
+
+		if compat == 3 then
+			makeWeldedCollider(part, size)
+			return
+		end
+
+		pcall(function()
+			part.Size = targetVec
+			part.CanCollide = false
+			if Settings.HitboxMassless then part.Massless = true end
+			part.Transparency = Settings.HitboxInvisible and 1 or 0.5
+		end)
+
+		if compat == 4 then
+			makeWeldedCollider(part, size)
+		end
+
+		if Settings.HitboxAntiRevert and (compat == 2 or compat == 4) then
+			hookSize(part, targetVec)
+		end
+	end
+
+	local function getPartsToApply(char)
+		local list = {}
+		local seen = {}
+		local mode = Settings.HitboxMode or 1
+
+		if mode == 4 then
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("BasePart") and d.Name ~= COLLIDER_NAME then
+					list[#list + 1] = d
+					seen[d] = true
 				end
 			end
+		else
+			for _, p in ipairs(getAttrHitboxes(char)) do
+				if not seen[p] then list[#list + 1] = p; seen[p] = true end
+			end
+			for _, name in ipairs(getPartNames(char)) do
+				local p = findPartByName(char, name)
+				if p and not seen[p] then
+					list[#list + 1] = p
+					seen[p] = true
+				end
+			end
+		end
+
+		if Settings.HitboxIncludeHRP then
+			local hrp = char:FindFirstChild("HumanoidRootPart")
+			if hrp and not seen[hrp] then
+				list[#list + 1] = hrp
+				seen[hrp] = true
+			end
+		end
+		return list, seen
+	end
+
+	local function applyToChar(char, partsToApply, seen)
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and savedProps[d] and not seen[d] then
+				restorePart(d)
+			end
+		end
+		for _, p in ipairs(partsToApply) do
+			applySize(p)
 		end
 	end
 
 	local function restorePlayer(player)
 		local char = player.Character
 		if not char then return end
-		for _, entry in ipairs(PART_KEYS) do
-			local part = char:FindFirstChild(entry[1])
-			if part and part:IsA("BasePart") then restorePart(part) end
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") and savedProps[d] then
+				restorePart(d)
+			end
 		end
 	end
 
@@ -1138,9 +1353,7 @@ do
 		if not char then return false end
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if not hum or hum.Health <= 0 then return false end
-
 		if not isHitboxTarget(player) then return false end
-
 		local myRoot = getLocalRoot()
 		local theirRoot = getRoot(char)
 		if not myRoot or not theirRoot then return false end
@@ -1157,18 +1370,24 @@ do
 			return
 		end
 		local now = os.clock()
-		if now - lastApply < 0.1 then return end
+		local rate = Settings.HitboxRefreshRate or 0.05
+		if now - lastApply < rate then return end
 		lastApply = now
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= LocalPlayer then
-				if shouldExpand(plr) then expandPlayer(plr) else restorePlayer(plr) end
+				if shouldExpand(plr) then
+					local char = plr.Character
+					if char then
+						local parts, seen = getPartsToApply(char)
+						applyToChar(char, parts, seen)
+					end
+				else
+					restorePlayer(plr)
+				end
 			end
 		end
 	end
 
-	-- ============================================================
-	-- RESTAURAÇÃO IMEDIATA AO MUDAR DE TIME
-	-- ============================================================
 	local function watchPlayer(plr)
 		if plr == LocalPlayer then return end
 		local function checkNow()
@@ -1194,13 +1413,20 @@ do
 	LocalPlayer:GetPropertyChangedSignal("Neutral"):Connect(onMyTeamChanged)
 	LocalPlayer:GetPropertyChangedSignal("TeamColor"):Connect(onMyTeamChanged)
 
+	LocalPlayer.CharacterAdded:Connect(function()
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer then restorePlayer(plr) end
+		end
+	end)
+
 	HitboxExpander.step = step
 	HitboxExpander.isHitboxTarget = isHitboxTarget
 	HitboxExpander.restorePlayer = restorePlayer
+	HitboxExpander.detectRig = detectRig
 end
 
 task.spawn(function()
-	while task.wait(0.1) do pcall(HitboxExpander.step) end
+	while task.wait(0.03) do pcall(HitboxExpander.step) end
 end)
 
 --------------------------------------------------------------------
@@ -2370,7 +2596,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v99.1"
+title.Text = "Test Toolkit v99.2"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2972,11 +3198,19 @@ addToggle("Hitbox Expander", "HitboxExpander", "Aumenta a hitbox")
 addToggle("Invisível", "HitboxInvisible", "Hitbox transparente")
 addSlider("Tamanho", "HitboxSize", 5, 30, 1, 0, "Studs")
 addSlider("Alcance", "HitboxRange", 10, 1000, 10, 0, "Distância máxima")
+addCycle("Modo", "HitboxMode", { "Auto", "Básico", "Completo", "Tudo" }, "O que expandir")
+addToggle("Incluir HRP", "HitboxIncludeHRP", "Também expande o root part")
+addToggle("Massless", "HitboxMassless", "Remove massa das partes")
+addSlider("Refresh", "HitboxRefreshRate", 0.03, 0.5, 0.01, 2, "Menor = mais agressivo")
+addSection("Compatibilidade")
+addCycle("Modo compat", "HitboxCompat", { "Padrão", "Agressivo", "Soldado", "Híbrido" }, "Estratégia de aplicação")
+addToggle("Anti-revert", "HitboxAntiRevert", "Reaplica se o jogo resetar")
+addToggle("Case-insensitive", "HitboxCaseInsensitive", "Aceita 'head', '_Head', etc.")
 addSection("Team Check")
 addToggle("Team Check", "HitboxTeamCheck", "Não expande em aliados")
 addToggle("Ignorar amigos", "HitboxIgnoreFriends", "Não expande em amigos")
 addToggle("Ignorar forcefield", "HitboxIgnoreForcefield", "Pula spawn protection")
-addSection("Partes")
+addSection("Partes (Modos Básico/Completo)")
 addToggle("Cabeça", "ExpandHead", "")
 addToggle("Torso (R6)", "ExpandTorso", "")
 addToggle("UpperTorso (R15)", "ExpandUpperTorso", "")
@@ -3126,9 +3360,6 @@ if isMobile then
 	addInfo(T("Os botões podem ser arrastados pela tela. Toque rápido para ativar; arraste para reposicionar."), 42)
 end
 
---------------------------------------------------------------------
--- ABA CONFIG
---------------------------------------------------------------------
 newPage("config", "Config")
 addSection("Configurações")
 addButton("Salvar Config", "Salva todas as configurações atuais em um arquivo.", function()
@@ -3182,7 +3413,7 @@ do
 	end)
 end
 addSection("Sobre")
-addInfo("TestToolkit v99.1 • " .. (isMobile and "Mobile" or "PC") .. "\n" ..
+addInfo("TestToolkit v99.2 • " .. (isMobile and "Mobile" or "PC") .. "\n" ..
 	(fileApiAvailable() and "File API: OK" or "File API: indisponível (save/load off)"), 48)
 
 --------------------------------------------------------------------
@@ -3468,9 +3699,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v99.1 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v99.2 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v99.1 carregado com sucesso!")
+	print("[TestToolkit] v99.2 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
