@@ -1,6 +1,3 @@
-TestToolkit v97.3 — completo com fix mobile
-
-```lua
 --[[
     TestToolkit v97.3 (Mobile Fix)
     - Trigger bot (qualquer parte do corpo, delay 0)
@@ -2953,22 +2950,3 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end)
 end)
-```
-
-O que mudou na v97.3
-
-Bug Fix aplicado
-Botões não somem updateMobileBtns() agora roda num loop a cada 0.1s + é chamado dentro do refreshAll()
-Botões feios Novo design: label central, dot de estado no canto, sombra suave, animação de toque (encolhe + escurece)
-Player não anda/pula espRoot, toastHolder, triggerFovCircle, aimFovCircle e hud ganharam Active = false + Selectable = false (e espRoot ainda tenta Interactable = false). Isso impede que qualquer overlay invisível capture os toques/movimento do joystick mobile.
-Botão TT Continua abrindo/fechando menu; agora com dot verde quando aberto
-Tamanho padrão MobileBtnSize = 64 (antes 56) pra facilitar toques
-Slider de tamanho Agora de 48 a 100 (antes 40 a 90), step 2
-
-Ordem de teste no mobile:
-
-1. Roda o script
-2. Anda e pula normal — se ainda não andar, me avisa
-3. Abre o menu pelo botão TT
-4. Aba Botões → desliga "Botão ESP" → deve sumir na hora
-5. Aba Botões → arrasta o slider "Tamanho dos botões" → todos devem redimensionar em tempo real
