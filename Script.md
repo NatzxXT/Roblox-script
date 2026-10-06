@@ -1,10 +1,9 @@
 --[[
-    TestToolkit v98.0
-    - HUD centralizado no topo (abaixo da topbar do Roblox)
-    - Fix voo: cai normal ao desativar
-    - Trigger bot mobile: Tool:Activate() (não afeta controles)
-    - Trigger bot PC: mouse simulation
-    - Aimbot, team check, ESP, mouse fix, botões arrastáveis
+    TestToolkit v99.0
+    - Sistema de idioma PT / EN
+    - Save / Load / Reset de config
+    - Nova aba "Config"
+    - (todas as funções da v98.0 mantidas)
 ]]
 
 local Players = game:GetService("Players")
@@ -15,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -28,6 +28,8 @@ local isMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- SETTINGS
 --------------------------------------------------------------------
 local Settings = {
+	Language = "pt",
+
 	ESP = true, Rainbow = true, ShowNames = true,
 	Wallhack = true, ESPMaxDist = 300, ESPMaxTargets = 12,
 	ESPHighlight = true, ESPColor = Color3.fromRGB(255, 80, 80), ESPFillTrans = 0.65,
@@ -94,6 +96,276 @@ local Settings = {
 }
 
 --------------------------------------------------------------------
+-- CONFIG PADRÃO (snapshot profundo)
+--------------------------------------------------------------------
+local function deepCopy(v)
+	if type(v) ~= "table" then return v end
+	local out = {}
+	for k, val in pairs(v) do out[k] = deepCopy(val) end
+	return out
+end
+local DefaultSettings = deepCopy(Settings)
+
+--------------------------------------------------------------------
+-- SISTEMA DE IDIOMA
+--------------------------------------------------------------------
+local Lang = {
+	pt = {}, -- PT é o idioma nativo: o fallback retorna a própria string
+	en = {
+		-- Abas
+		["Trigger"] = "Trigger", ["Aim"] = "Aim", ["Hitbox"] = "Hitbox",
+		["ESP"] = "ESP", ["Jogador"] = "Player", ["Extras"] = "Misc",
+		["Fling"] = "Fling", ["Segurança"] = "Security", ["Botões"] = "Buttons",
+		["Config"] = "Config",
+
+		-- Seções
+		["Trigger Bot"] = "Trigger Bot",
+		["Alvos"] = "Targets",
+		["Team Check"] = "Team Check",
+		["Tecla (PC)"] = "Key (PC)",
+		["Aimbot (câmera)"] = "Aimbot (camera)",
+		["Hitbox Expander"] = "Hitbox Expander",
+		["Partes"] = "Parts",
+		["Limites"] = "Limits",
+		["Movimento"] = "Movement",
+		["Teclas (PC)"] = "Keys (PC)",
+		["Invisibilidade (Seat Bug)"] = "Invisibility (Seat Bug)",
+		["Visão"] = "Vision",
+		["Interface"] = "Interface",
+		["Fling Bots"] = "Fling Bots",
+		["Fling Player"] = "Fling Player",
+		["Touch Fling"] = "Touch Fling",
+		["Spectate"] = "Spectate",
+		["Proteção contra morte"] = "Death Protection",
+		["Proteção contra arremesso"] = "Fling Protection",
+		["Proteção contra kick"] = "Kick Protection",
+		["Botões na tela"] = "Screen Buttons",
+		["Aparência"] = "Appearance",
+		["Dica"] = "Tip",
+		["Configurações"] = "Settings",
+		["Idioma"] = "Language",
+		["Persistência"] = "Persistence",
+		["Resetar"] = "Reset",
+		["Sobre"] = "About",
+
+		-- Opções
+		["Sempre ativo"] = "Always active",
+		["Só visíveis"] = "Only visible",
+		["FOV do Trigger"] = "Trigger FOV",
+		["Delay"] = "Delay",
+		["Ignorar amigos"] = "Ignore friends",
+		["Ignorar forcefield"] = "Ignore forcefield",
+		["Tecla do Trigger"] = "Trigger key",
+		["Aimbot"] = "Aimbot",
+		["Mostrar FOV"] = "Show FOV",
+		["Parte do corpo"] = "Body part",
+		["FOV do aim"] = "Aim FOV",
+		["Suavidade"] = "Smoothness",
+		["Tecla do aim"] = "Aim key",
+		["Invisível"] = "Invisible",
+		["Tamanho"] = "Size",
+		["Alcance"] = "Range",
+		["Cabeça"] = "Head",
+		["Torso (R6)"] = "Torso (R6)",
+		["UpperTorso (R15)"] = "UpperTorso (R15)",
+		["LowerTorso (R15)"] = "LowerTorso (R15)",
+		["Ver através de paredes"] = "See through walls",
+		["Contorno colorido"] = "Colored outline",
+		["Cor arco-íris"] = "Rainbow color",
+		["Nomes e distância"] = "Names & distance",
+		["Linhas"] = "Tracers",
+		["Origem da linha"] = "Tracer origin",
+		["Distância máxima"] = "Max distance",
+		["Máx. de alvos"] = "Max targets",
+		["Transparência"] = "Transparency",
+		["Velocidade"] = "Speed",
+		["Valor da velocidade"] = "Speed value",
+		["Modo Furtivo"] = "Stealth mode",
+		["Vel. Furtiva"] = "Stealth speed",
+		["Pulo"] = "Jump",
+		["Valor do pulo"] = "Jump value",
+		["Pulo infinito"] = "Infinite jump",
+		["Voo"] = "Fly",
+		["Velocidade do voo"] = "Fly speed",
+		["Noclip"] = "Noclip",
+		["Tecla do voo"] = "Fly key",
+		["Tecla do noclip"] = "Noclip key",
+		["Invisível (Seat Bug)"] = "Invisible (Seat Bug)",
+		["Tecla da Invisibilidade"] = "Invisibility key",
+		["Luz total"] = "Full bright",
+		["Sem neblina"] = "No fog",
+		["FOV da câmera"] = "Camera FOV",
+		["Valor do FOV"] = "FOV value",
+		["Anti-AFK"] = "Anti-AFK",
+		["HUD"] = "HUD",
+		["Mover HUD"] = "Move HUD",
+		["Notificações"] = "Notifications",
+		["Transparência do menu"] = "Menu transparency",
+		["Alcance (bots)"] = "Range (bots)",
+		["Intervalo"] = "Interval",
+		["Escolher Player"] = "Choose Player",
+		["Alcance do Touch"] = "Touch range",
+		["Tecla do Touch Fling"] = "Touch Fling key",
+		["Spectate Player"] = "Spectate Player",
+		["Tecla do Fling Bots"] = "Fling Bots key",
+		["Tecla do Fling Player"] = "Fling Player key",
+		["Anti Void"] = "Anti Void",
+		["Anti Fling"] = "Anti Fling",
+		["Limite"] = "Limit",
+		["Botão VOO"] = "FLY Button",
+		["Botão NOCLIP"] = "NOCLIP Button",
+		["Botão ESP"] = "ESP Button",
+		["Botão FLING"] = "FLING Button",
+		["Tamanho dos botões"] = "Button size",
+
+		-- Descrições
+		["Atira automaticamente"] = "Auto fires",
+		["Sem precisar segurar a tecla"] = "No key needed",
+		["Só atira com LOS"] = "Only fires with LOS",
+		["5 = centro"] = "5 = center",
+		["0 = sem delay"] = "0 = no delay",
+		["Quem mirar"] = "Who to aim at",
+		["Não mira em amigos"] = "Don't aim at friends",
+		["Pula spawn protection"] = "Skips spawn protection",
+		["Segura para ativar"] = "Hold to activate",
+		["Câmera gruda no player"] = "Camera locks onto player",
+		["Não precisa segurar tecla"] = "No key needed",
+		["Respeita parede"] = "Respects walls",
+		["Círculo verde/vermelho"] = "Green/red circle",
+		["Onde mirar"] = "Where to aim",
+		["Raio em pixels"] = "Radius in pixels",
+		["1 = instantâneo"] = "1 = instant",
+		["Segura para mirar"] = "Hold to aim",
+		["Aumenta a hitbox"] = "Expands hitbox",
+		["Hitbox transparente"] = "Transparent hitbox",
+		["Studs"] = "Studs",
+		["Distância máxima"] = "Max distance",
+		["Mostra alvos"] = "Shows targets",
+		["Contorno atrás de objetos"] = "Outline behind objects",
+		["Mais pesado"] = "Heavier",
+		["Cor animada"] = "Animated color",
+		["Texto acima"] = "Text above",
+		["Linha da tela"] = "Screen line",
+		["De onde sai"] = "Where it starts",
+		["0 = sem limite"] = "0 = no limit",
+		["Menos = mais FPS"] = "Less = more FPS",
+		["0 = sólido"] = "0 = solid",
+		["Muda WalkSpeed"] = "Changes WalkSpeed",
+		["Padrão 16"] = "Default 16",
+		["Bypass anti-cheat"] = "Bypass anti-cheat",
+		["Recomendado: 24-32"] = "Recommended: 24-32",
+		["Muda JumpPower"] = "Changes JumpPower",
+		["Padrão 50"] = "Default 50",
+		["Pula no ar"] = "Jump in air",
+		["Espaço sobe, Ctrl desce"] = "Space up, Ctrl down",
+		["Studs/s"] = "Studs/s",
+		["Atravessa paredes"] = "Goes through walls",
+		["Liga/desliga voo"] = "Toggle fly",
+		["Liga/desliga noclip"] = "Toggle noclip",
+		["Ativa a invisibilidade"] = "Activates invisibility",
+		["Liga/desliga invisibilidade"] = "Toggle invisibility",
+		["Remove escuridão"] = "Removes darkness",
+		["Enxerga longe"] = "See farther",
+		["Muda FOV"] = "Changes FOV",
+		["Padrão 70"] = "Default 70",
+		["Evita kick"] = "Prevents kick",
+		["FPS e estados"] = "FPS and states",
+		["Arraste o HUD"] = "Drag the HUD",
+		["Avisos"] = "Alerts",
+		["Arremessa bots próximos"] = "Throws nearby bots",
+		["Entre aplicações"] = "Between applications",
+		["Escolha o player e clique em um botão."] = "Choose a player and click a button.",
+		["Alvo do fling"] = "Fling target",
+		["Só o alvo voa"] = "Only target flies",
+		["Você + alvo voam juntos"] = "You + target fly together",
+		["Volta pra posição original"] = "Return to original position",
+		["Só os alvos voam"] = "Only targets fly",
+		["Arremessa quem chegar perto"] = "Throws nearby players",
+		["Seguir um player"] = "Follow a player",
+		["Começa a spectar"] = "Starts spectating",
+		["Volta a câmera"] = "Returns camera",
+		["Arremessa o player selecionado"] = "Throws selected player",
+		["Volta se cair no vazio"] = "Returns if you fall",
+		["Bloqueia arremessos"] = "Blocks throws",
+		["Pixels"] = "Pixels",
+		["Os botões podem ser arrastados pela tela. Toque rápido para ativar; arraste para reposicionar."] = "Buttons can be dragged. Tap to toggle; drag to reposition.",
+		["Salva todas as configurações atuais em um arquivo."] = "Saves all current settings to a file.",
+		["Carrega as configurações salvas anteriormente."] = "Loads previously saved settings.",
+		["Restaura todas as configurações para o padrão."] = "Restores all settings to default.",
+		["Escolha o idioma da interface."] = "Choose the interface language.",
+
+		-- Botões
+		["FLING PLAYER (SAFE)"] = "FLING PLAYER (SAFE)",
+		["FLING PLAYER (K1LAS1K)"] = "FLING PLAYER (K1LAS1K)",
+		["PARAR FLING"] = "STOP FLING",
+		["FLING TODOS (SAFE)"] = "FLING ALL (SAFE)",
+		["Spectar"] = "Spectate",
+		["Parar Spectate"] = "Stop Spectate",
+		["Salvar Config"] = "Save Config",
+		["Carregar Config"] = "Load Config",
+		["Resetar Config"] = "Reset Config",
+
+		-- Ciclos / valores
+		["Jogadores"] = "Players",
+		["Bots"] = "Bots",
+		["Ambos"] = "Both",
+		["Torso"] = "Torso",
+		["Mais perto"] = "Nearest",
+		["Baixo"] = "Bottom",
+		["Centro"] = "Center",
+		["Cursor"] = "Cursor",
+		["Nenhum"] = "None",
+		["Português"] = "Portuguese",
+		["English"] = "English",
+
+		-- Notificações
+		["Anti Void: trazido de volta"] = "Anti Void: brought back",
+		["Fling parado"] = "Fling stopped",
+		["Spectate: alvo saiu do jogo"] = "Spectate: target left the game",
+		["Fling: selecione um player"] = "Fling: select a player",
+		["Fling: falhou"] = "Fling: failed",
+		["Spectate: selecione um player"] = "Spectate: select a player",
+		["Spectate falhou"] = "Spectate failed",
+		["Spectate parado"] = "Spectate stopped",
+		["Fling não está ativo"] = "Fling is not active",
+		["Config salva!"] = "Config saved!",
+		["Config carregada!"] = "Config loaded!",
+		["Config resetada!"] = "Config reset!",
+		["Falha ao salvar config (sem API de arquivo)"] = "Failed to save config (no file API)",
+		["Falha ao carregar config"] = "Failed to load config",
+		["Arquivo de config não encontrado"] = "Config file not found",
+		["Idioma: Português"] = "Language: Portuguese",
+		["Idioma: English"] = "Language: English",
+	},
+}
+
+local function T(key)
+	if key == nil or key == "" then return "" end
+	local tbl = Lang[Settings.Language]
+	if not tbl then return tostring(key) end
+	return tbl[key] or tostring(key)
+end
+_G.TT_T = T
+
+-- Sistema de refresh dos textos ao trocar de idioma
+local langBindings = {}
+local function bindLang(obj, key, suffixFn)
+	if not obj then return end
+	langBindings[#langBindings + 1] = { obj = obj, key = key, suffix = suffixFn }
+	local suffix = suffixFn and suffixFn() or ""
+	obj.Text = T(key) .. suffix
+end
+local function refreshLang()
+	for _, b in ipairs(langBindings) do
+		if b.obj and b.obj.Parent then
+			local suffix = b.suffix and b.suffix() or ""
+			b.obj.Text = T(b.key) .. suffix
+		end
+	end
+end
+_G.TT_refreshLang = refreshLang
+
+--------------------------------------------------------------------
 -- BOOT
 --------------------------------------------------------------------
 local bootGui, bootLabel = nil, nil
@@ -128,7 +400,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v98.0 carregando...")
+bootShow("TestToolkit v99.0 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -990,7 +1262,7 @@ RunService.Heartbeat:Connect(function()
 				LocalPlayer.Character:PivotTo(target)
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				notify("Anti Void: trazido de volta", "info")
+				notify(T("Anti Void: trazido de volta"), "info")
 			end
 		elseif hum.FloorMaterial ~= Enum.Material.Air then
 			lastSafe = root.CFrame + Vector3.new(0, 3, 0)
@@ -1039,7 +1311,7 @@ do
 			end)
 		end
 		Fling.flingOriginalCFrame = nil
-		notify("Fling parado", "info")
+		notify(T("Fling parado"), "info")
 	end
 
 	local function FPos(BasePart, Pos, Ang, RootPart, Character, myRoot)
@@ -1417,7 +1689,7 @@ do
 			if Settings.Spectating and currentTarget then
 				if not currentTarget.Parent then
 					Spectate.stop()
-					notify("Spectate: alvo saiu do jogo", "off")
+					notify(T("Spectate: alvo saiu do jogo"), "off")
 					if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 				else
 					local char = currentTarget.Character
@@ -1432,6 +1704,132 @@ do
 	end)
 end
 _G.TT_Spectate = Spectate
+
+--------------------------------------------------------------------
+-- CONFIG MANAGER (save / load / reset)
+--------------------------------------------------------------------
+local ConfigManager = {}
+_G.TT_Config = ConfigManager
+
+ConfigManager.FILE = "TestToolkit_v99_config.json"
+
+local function fileApiAvailable()
+	return type(writefile) == "function" and type(readfile) == "function"
+end
+
+-- Serialização de tipos Roblox especiais
+local function serializeValue(v)
+	local t = typeof(v)
+	if t == "EnumItem" then
+		return { __enum = tostring(v.EnumType) .. "." .. v.Name }
+	elseif t == "Color3" then
+		return { __color = { v.R, v.G, v.B } }
+	elseif t == "UDim2" then
+		return { __udim2 = { v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset } }
+	elseif t == "UDim" then
+		return { __udim = { v.Scale, v.Offset } }
+	elseif t == "Vector3" then
+		return { __vec3 = { v.X, v.Y, v.Z } }
+	elseif t == "Vector2" then
+		return { __vec2 = { v.X, v.Y } }
+	elseif type(v) == "table" then
+		local out = {}
+		for k, val in pairs(v) do out[k] = serializeValue(val) end
+		return out
+	else
+		return v
+	end
+end
+
+local function deserializeValue(v)
+	if type(v) ~= "table" then return v end
+	if v.__enum then
+		local typeName, itemName = string.match(v.__enum, "([^%.]+)%.(.+)")
+		local enumType = typeName and Enum[typeName]
+		if enumType and itemName then return enumType[itemName] end
+		return nil
+	elseif v.__color then
+		local c = v.__color
+		return Color3.new(c[1], c[2], c[3])
+	elseif v.__udim2 then
+		local u = v.__udim2
+		return UDim2.new(u[1], u[2], u[3], u[4])
+	elseif v.__udim then
+		local u = v.__udim
+		return UDim.new(u[1], u[2])
+	elseif v.__vec3 then
+		local u = v.__vec3
+		return Vector3.new(u[1], u[2], u[3])
+	elseif v.__vec2 then
+		local u = v.__vec2
+		return Vector2.new(u[1], u[2])
+	else
+		local out = {}
+		for k, val in pairs(v) do out[k] = deserializeValue(val) end
+		return out
+	end
+end
+
+local function applyToSettings(src)
+	for k, v in pairs(src) do
+		if Settings[k] ~= nil then
+			Settings[k] = v
+		end
+	end
+end
+
+ConfigManager.save = function()
+	if not fileApiAvailable() then
+		return false, T("Falha ao salvar config (sem API de arquivo)")
+	end
+	local data = {}
+	for k, v in pairs(Settings) do
+		data[k] = serializeValue(v)
+	end
+	local ok, encoded = pcall(function() return HttpService:JSONEncode(data) end)
+	if not ok then return false, "encode: " .. tostring(encoded) end
+	local ok2, err = pcall(writefile, ConfigManager.FILE, encoded)
+	if not ok2 then return false, tostring(err) end
+	return true
+end
+
+ConfigManager.load = function()
+	if not fileApiAvailable() then
+		return false, T("Falha ao carregar config")
+	end
+	if type(isfile) == "function" and not isfile(ConfigManager.FILE) then
+		return false, T("Arquivo de config não encontrado")
+	end
+	local ok, content = pcall(readfile, ConfigManager.FILE)
+	if not ok or not content then return false, T("Arquivo de config não encontrado") end
+	local ok2, decoded = pcall(function() return HttpService:JSONDecode(content) end)
+	if not ok2 or type(decoded) ~= "table" then
+		return false, T("Falha ao carregar config")
+	end
+	local restored = {}
+	for k, v in pairs(decoded) do
+		restored[k] = deserializeValue(v)
+	end
+	applyToSettings(restored)
+	if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+	if _G.TT_refreshLang then pcall(_G.TT_refreshLang) end
+	return true
+end
+
+ConfigManager.reset = function()
+	for k, v in pairs(DefaultSettings) do
+		Settings[k] = deepCopy(v)
+	end
+	if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
+	if _G.TT_refreshLang then pcall(_G.TT_refreshLang) end
+	return true
+end
+
+ConfigManager.hasFile = function()
+	if not fileApiAvailable() then return false end
+	if type(isfile) == "function" then return isfile(ConfigManager.FILE) end
+	return true
+end
 
 --------------------------------------------------------------------
 -- HEARTBEAT
@@ -1854,7 +2252,7 @@ local refreshers = {}
 local uiRefresh = function() end
 
 local function buildUI()
-local TAB_TOTAL = isMobile and 8 or 7
+local TAB_TOTAL = isMobile and 9 or 8
 
 local menu = Instance.new("CanvasGroup")
 menu.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1901,7 +2299,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v98.0"
+title.Text = "Test Toolkit v99.0"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2026,7 +2424,7 @@ local function layoutTabs()
 	end
 end
 
-local function newPage(name, label)
+local function newPage(name, labelKey)
 	local page = Instance.new("ScrollingFrame")
 	page.Name = name
 	page.Size = UDim2.fromScale(1, 1)
@@ -2057,10 +2455,11 @@ local function newPage(name, label)
 	btn.Font = Enum.Font.GothamBold
 	btn.TextSize = 11
 	btn.TextColor3 = Theme.SubText
-	btn.Text = label
+	btn.Text = T(labelKey)
 	btn.Parent = tabHolder
 	corner(btn, 8)
 	btn.MouseButton1Click:Connect(function() selectTab(name) end)
+	bindLang(btn, labelKey)
 	pages[name] = page
 	tabButtons[name] = btn
 	tabIndex[name] = tabCount
@@ -2093,8 +2492,9 @@ local function rowLabel(parent, text, desc, rightPad)
 	l.TextTruncate = Enum.TextTruncate.AtEnd
 	l.Text = tostring(text or "")
 	l.Parent = parent
+	local d = nil
 	if desc then
-		local d = Instance.new("TextLabel")
+		d = Instance.new("TextLabel")
 		d.BackgroundTransparency = 1
 		d.Position = UDim2.fromOffset(12, 22)
 		d.Size = UDim2.new(1, -24, 0, 13)
@@ -2106,7 +2506,7 @@ local function rowLabel(parent, text, desc, rightPad)
 		d.Text = tostring(desc or "")
 		d.Parent = parent
 	end
-	return l
+	return l, d
 end
 
 local function hover(row)
@@ -2119,7 +2519,7 @@ local function hover(row)
 	end)
 end
 
-local function addSection(text)
+local function addSection(textKey)
 	order += 1
 	local holder = Instance.new("Frame")
 	holder.BackgroundTransparency = 1
@@ -2134,8 +2534,20 @@ local function addSection(text)
 	l.TextSize = 12
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	l.TextColor3 = Theme.Accent
-	l.Text = string.upper(tostring(text or ""))
+	l.Text = string.upper(T(textKey))
 	l.Parent = holder
+	bindLang(l, textKey, function() return "" end)
+	-- aplicar upper após T
+	local oldBind = langBindings[#langBindings]
+	oldBind.obj = l
+	oldBind.key = textKey
+	oldBind.suffix = function() return "" end
+	-- Reaplica com upper manualmente
+	l.Text = string.upper(T(textKey))
+	holder:GetPropertyChangedSignal("Parent"):Connect(function() end)
+	-- Fallback: substituímos o binding por um custom refresh
+	-- (mais simples: registrar um refresh extra)
+	refreshers[#refreshers + 1] = function() l.Text = string.upper(T(textKey)) end
 	return holder
 end
 
@@ -2156,9 +2568,11 @@ local function addInfo(text, height)
 	return l
 end
 
-local function addToggle(text, key, desc, onChange)
-	local row = newRow(desc and 42 or 36, "TextButton")
-	rowLabel(row, text, desc)
+local function addToggle(textKey, key, descKey, onChange)
+	local row = newRow(descKey and 42 or 36, "TextButton")
+	local l, d = rowLabel(row, T(textKey), descKey and T(descKey))
+	bindLang(l, textKey)
+	if d then bindLang(d, descKey) end
 	hover(row)
 	local pill = Instance.new("Frame")
 	pill.AnchorPoint = Vector2.new(1, 0.5)
@@ -2191,15 +2605,17 @@ local function addToggle(text, key, desc, onChange)
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = not Settings[key]
 		for _, refresh in ipairs(refreshers) do refresh() end
-		notify(tostring(text) .. (Settings[key] and ": ligado" or ": desligado"), Settings[key] and "on" or "off")
+		notify(T(textKey) .. (Settings[key] and ": " .. (Settings.Language == "pt" and "ligado" or "on") or ": " .. (Settings.Language == "pt" and "desligado" or "off")),
+			Settings[key] and "on" or "off")
 		if onChange then onChange() end
 	end)
 end
 
-local function addCycle(text, key, options, desc, onChange)
-	local row = newRow(desc and 42 or 36, "TextButton")
+local function addCycle(textKey, key, options, descKey, onChange)
+	local row = newRow(descKey and 42 or 36, "TextButton")
 	hover(row)
-	local l = rowLabel(row, "", desc, 30)
+	local l, d = rowLabel(row, "", descKey and T(descKey), 30)
+	if d then bindLang(d, descKey) end
 	local arrow = Instance.new("TextLabel")
 	arrow.BackgroundTransparency = 1
 	arrow.AnchorPoint = Vector2.new(1, 0.5)
@@ -2212,9 +2628,10 @@ local function addCycle(text, key, options, desc, onChange)
 	arrow.Parent = row
 	local function render()
 		local opt = options[Settings[key]] or "?"
-		l.Text = tostring(text) .. ": " .. tostring(opt)
+		l.Text = T(textKey) .. ": " .. T(opt)
 	end
 	render()
+	table.insert(refreshers, render)
 	row.MouseButton1Click:Connect(function()
 		Settings[key] = (Settings[key] % #options) + 1
 		render()
@@ -2224,16 +2641,17 @@ end
 
 local sliderDrag, sliderPage = nil, nil
 
-local function addSlider(text, key, min, max, step, decimals, desc, onChange)
+local function addSlider(textKey, key, min, max, step, decimals, descKey, onChange)
 	local page = currentPage
-	local row = newRow(desc and 58 or 50, "Frame")
-	local name = rowLabel(row, text, desc, 0)
-	name.Size = UDim2.new(0.65, -12, 0, desc and 18 or 28)
+	local row = newRow(descKey and 58 or 50, "Frame")
+	local l, d = rowLabel(row, "", descKey and T(descKey), 0)
+	if d then bindLang(d, descKey) end
+	l.Size = UDim2.new(0.65, -12, 0, descKey and 18 or 28)
 	local valueLabel = Instance.new("TextLabel")
 	valueLabel.BackgroundTransparency = 1
 	valueLabel.AnchorPoint = Vector2.new(1, 0)
-	valueLabel.Position = UDim2.new(1, -12, 0, desc and 4 or 0)
-	valueLabel.Size = UDim2.new(0.35, -12, 0, desc and 18 or 28)
+	valueLabel.Position = UDim2.new(1, -12, 0, descKey and 4 or 0)
+	valueLabel.Size = UDim2.new(0.35, -12, 0, descKey and 18 or 28)
 	valueLabel.Font = Enum.Font.GothamBold
 	valueLabel.TextSize = 13
 	valueLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -2242,7 +2660,7 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 	local hit = Instance.new("TextButton")
 	hit.BackgroundTransparency = 1
 	hit.Text = ""
-	hit.Position = UDim2.new(0, 12, 0, desc and 40 or 28)
+	hit.Position = UDim2.new(0, 12, 0, descKey and 40 or 28)
 	hit.Size = UDim2.new(1, -24, 0, 16)
 	hit.Parent = row
 	local bar = Instance.new("Frame")
@@ -2275,12 +2693,14 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 	end
 	render()
 	table.insert(refreshers, render)
+	bindLang(l, textKey, function() return " (" .. tostring(Settings[key]) .. ")" end)
 	local function setFromX(x)
 		local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
 		local v = min + rel * (max - min)
 		v = math.floor(v / step + 0.5) * step
 		Settings[key] = math.clamp(v, min, max)
 		render()
+		if l then l.Text = T(textKey) .. " (" .. tostring(Settings[key]) .. ")" end
 		if onChange then onChange() end
 	end
 	hit.InputBegan:Connect(function(input)
@@ -2310,6 +2730,7 @@ local function addSlider(text, key, min, max, step, decimals, desc, onChange)
 				if num then
 					Settings[key] = math.clamp(num, min, max)
 					render()
+					if l then l.Text = T(textKey) .. " (" .. tostring(Settings[key]) .. ")" end
 					if onChange then onChange() end
 				end
 				box:Destroy()
@@ -2332,42 +2753,46 @@ end)
 
 local rebinding = nil
 
-local function addKeybind(text, key, desc, allowMouse)
-	local row = newRow(desc and 42 or 36, "TextButton")
+local function addKeybind(textKey, key, descKey, allowMouse)
+	local row = newRow(descKey and 42 or 36, "TextButton")
 	row.Visible = not isMobile
 	hover(row)
-	local l = rowLabel(row, "", desc, 30)
+	local l, d = rowLabel(row, "", descKey and T(descKey), 30)
+	if d then bindLang(d, descKey) end
 	local function render()
 		local kb = Settings[key]
-		l.Text = tostring(text) .. ": [" .. tostring(kb and kb.Name or "?") .. "]"
+		l.Text = T(textKey) .. ": [" .. tostring(kb and kb.Name or "?") .. "]"
 	end
 	render()
 	row.MouseButton1Click:Connect(function()
-		l.Text = tostring(text) .. ": pressione uma tecla..."
+		l.Text = T(textKey) .. ": ..."
 		rebinding = { mouse = allowMouse, apply = function(bind)
 			if bind then
 				Settings[key] = bind
-				notify(tostring(text) .. ": " .. tostring(bind.Name), "info")
+				notify(T(textKey) .. ": " .. tostring(bind.Name), "info")
 			end
 			render()
 		end }
 	end)
 end
 
-local function addButton(text, desc, onClick)
-	local row = newRow(desc and 42 or 36, "TextButton")
+local function addButton(textKey, descKey, onClick)
+	local row = newRow(descKey and 42 or 36, "TextButton")
 	hover(row)
-	local l = rowLabel(row, text, desc, 30)
+	local l, d = rowLabel(row, T(textKey), descKey and T(descKey), 30)
+	bindLang(l, textKey)
+	if d then bindLang(d, descKey) end
 	l.TextColor3 = Theme.Accent
 	row.MouseButton1Click:Connect(function()
 		if onClick then onClick() end
 	end)
 end
 
-local function addDropdown(text, key, desc, onChange)
-	local row = newRow(desc and 42 or 36, "TextButton")
+local function addDropdown(textKey, key, descKey, onChange)
+	local row = newRow(descKey and 42 or 36, "TextButton")
 	hover(row)
-	local l = rowLabel(row, "", desc, 30)
+	local l, d = rowLabel(row, "", descKey and T(descKey), 30)
+	if d then bindLang(d, descKey) end
 	local arrow = Instance.new("TextLabel")
 	arrow.BackgroundTransparency = 1
 	arrow.AnchorPoint = Vector2.new(1, 0.5)
@@ -2380,7 +2805,7 @@ local function addDropdown(text, key, desc, onChange)
 	arrow.Parent = row
 	local dropdownFrame = nil
 	local function getList()
-		local list = { "Nenhum" }
+		local list = { T("Nenhum") }
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= LocalPlayer then list[#list + 1] = tostring(plr.DisplayName or plr.Name) end
 		end
@@ -2390,9 +2815,10 @@ local function addDropdown(text, key, desc, onChange)
 		if dropdownFrame then dropdownFrame:Destroy(); dropdownFrame = nil end
 	end
 	local function render()
-		l.Text = tostring(text) .. ": " .. tostring(Settings[key] or "Nenhum")
+		l.Text = T(textKey) .. ": " .. tostring(Settings[key] or T("Nenhum"))
 	end
 	render()
+	table.insert(refreshers, render)
 	local function openDropdown()
 		if dropdownFrame then closeDropdown(); return end
 		local list = getList()
@@ -2445,7 +2871,6 @@ local function addDropdown(text, key, desc, onChange)
 		end
 	end
 	row.MouseButton1Click:Connect(openDropdown)
-	table.insert(refreshers, render)
 end
 
 --------------------------------------------------------------------
@@ -2547,16 +2972,16 @@ addToggle("Fling Bots", "Fling", "Arremessa bots próximos")
 addSlider("Alcance (bots)", "FlingRange", 3, 30, 1, 0, "Studs")
 addSlider("Intervalo", "FlingRepeat", 0.05, 1, 0.05, 2, "Entre aplicações")
 addSection("Fling Player")
-addInfo("Escolha o player e clique em um botão.", 30)
+addInfo(T("Escolha o player e clique em um botão."), 30)
 addDropdown("Escolher Player", "FlingPlayerTarget", "Alvo do fling")
 addButton("FLING PLAYER (SAFE)", "Só o alvo voa", function()
 	local name = Settings.FlingPlayerTarget
-	if not name or name == "Nenhum" then notify("Fling: selecione um player", "off"); return end
+	if not name or name == "Nenhum" then notify(T("Fling: selecione um player"), "off"); return end
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if (plr.Name == name or plr.DisplayName == name) and plr ~= LocalPlayer then
 			task.spawn(function()
 				local ok = Fling.doFlingPlayerSafe(plr)
-				notify(ok and ("Fling Safe: " .. plr.DisplayName) or "Fling: falhou", ok and "on" or "off")
+				notify(ok and ("Fling Safe: " .. plr.DisplayName) or T("Fling: falhou"), ok and "on" or "off")
 			end)
 			return
 		end
@@ -2564,19 +2989,19 @@ addButton("FLING PLAYER (SAFE)", "Só o alvo voa", function()
 end)
 addButton("FLING PLAYER (K1LAS1K)", "Você + alvo voam juntos", function()
 	local name = Settings.FlingPlayerTarget
-	if not name or name == "Nenhum" then notify("Fling: selecione um player", "off"); return end
+	if not name or name == "Nenhum" then notify(T("Fling: selecione um player"), "off"); return end
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if (plr.Name == name or plr.DisplayName == name) and plr ~= LocalPlayer then
 			task.spawn(function()
 				local ok = Fling.doFlingPlayer(plr)
-				notify(ok and ("Fling: " .. plr.DisplayName) or "Fling: falhou", ok and "on" or "off")
+				notify(ok and ("Fling: " .. plr.DisplayName) or T("Fling: falhou"), ok and "on" or "off")
 			end)
 			return
 		end
 	end
 end)
 addButton("PARAR FLING", "Volta pra posição original", function()
-	if Fling.flingActive then Fling.stopFling() else notify("Fling não está ativo", "off") end
+	if Fling.flingActive then Fling.stopFling() else notify(T("Fling não está ativo"), "off") end
 end)
 addButton("FLING TODOS (SAFE)", "Só os alvos voam", function()
 	local count = 0
@@ -2597,18 +3022,18 @@ addSection("Spectate")
 addDropdown("Spectate Player", "SpectateTarget", "Seguir um player")
 addButton("Spectar", "Começa a spectar", function()
 	local name = Settings.SpectateTarget
-	if not name or name == "Nenhum" then notify("Spectate: selecione um player", "off"); return end
+	if not name or name == "Nenhum" then notify(T("Spectate: selecione um player"), "off"); return end
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if (plr.DisplayName == name or plr.Name == name) and plr ~= LocalPlayer then
 			local ok = Spectate.start(plr)
-			notify(ok and ("Spectando: " .. plr.DisplayName) or "Spectate falhou", ok and "on" or "off")
+			notify(ok and ("Spectando: " .. plr.DisplayName) or T("Spectate falhou"), ok and "on" or "off")
 			return
 		end
 	end
 end)
 addButton("Parar Spectate", "Volta a câmera", function()
 	Spectate.stop()
-	notify("Spectate parado", "info")
+	notify(T("Spectate parado"), "info")
 end)
 addSection("Teclas (PC)")
 addKeybind("Tecla do Fling Bots", "FlingKey", "Liga/desliga Fling")
@@ -2621,7 +3046,7 @@ addSection("Proteção contra arremesso")
 addToggle("Anti Fling", "AntiFling", "Bloqueia arremessos")
 addSlider("Limite", "AntiFlingSpeed", 50, 500, 10, 0, "Velocidade")
 addSection("Proteção contra kick")
-addToggle("Anti AFK", "AntiAFK", "Evita kick")
+addToggle("Anti-AFK", "AntiAFK", "Evita kick")
 
 if isMobile then
 	newPage("buttons", "Botões")
@@ -2634,8 +3059,67 @@ if isMobile then
 	addSlider("Tamanho dos botões", "MobileBtnSize", 48, 100, 2, 0, "Pixels")
 	addSlider("Transparência", "MobileBtnAlpha", 0, 0.9, 0.05, 2, "0 = sólido")
 	addSection("Dica")
-	addInfo("Os botões podem ser arrastados pela tela. Toque rápido para ativar; arraste para reposicionar.", 42)
+	addInfo(T("Os botões podem ser arrastados pela tela. Toque rápido para ativar; arraste para reposicionar."), 42)
 end
+
+--------------------------------------------------------------------
+-- ABA CONFIG (NOVO)
+--------------------------------------------------------------------
+newPage("config", "Config")
+addSection("Configurações")
+addButton("Salvar Config", "Salva todas as configurações atuais em um arquivo.", function()
+	local ok, err = ConfigManager.save()
+	if ok then notify(T("Config salva!"), "on")
+	else notify(err or "erro", "off") end
+end)
+addButton("Carregar Config", "Carrega as configurações salvas anteriormente.", function()
+	local ok, err = ConfigManager.load()
+	if ok then notify(T("Config carregada!"), "on")
+	else notify(err or "erro", "off") end
+end)
+addButton("Resetar Config", "Restaura todas as configurações para o padrão.", function()
+	ConfigManager.reset()
+	notify(T("Config resetada!"), "info")
+end)
+addSection("Idioma")
+do
+	local langRow = newRow(42, "TextButton")
+	hover(langRow)
+	local l, d = rowLabel(langRow, T("Idioma"), T("Escolha o idioma da interface."), 30)
+	bindLang(l, "Idioma")
+	if d then bindLang(d, "Escolha o idioma da interface.") end
+	local arrow = Instance.new("TextLabel")
+	arrow.BackgroundTransparency = 1
+	arrow.AnchorPoint = Vector2.new(1, 0.5)
+	arrow.Position = UDim2.new(1, -12, 0.5, 0)
+	arrow.Size = UDim2.fromOffset(16, 16)
+	arrow.Font = Enum.Font.GothamBold
+	arrow.TextSize = 14
+	arrow.TextColor3 = Theme.Accent
+	arrow.Text = ">"
+	arrow.Parent = langRow
+	local langOpts = { "Português", "English" }
+	local langCodes = { "pt", "en" }
+	local function renderLang()
+		local idx = 1
+		for i, c in ipairs(langCodes) do if c == Settings.Language then idx = i end end
+		l.Text = T("Idioma") .. ": " .. T(langOpts[idx])
+	end
+	renderLang()
+	table.insert(refreshers, renderLang)
+	langRow.MouseButton1Click:Connect(function()
+		local idx = 1
+		for i, c in ipairs(langCodes) do if c == Settings.Language then idx = i end end
+		idx = (idx % #langCodes) + 1
+		Settings.Language = langCodes[idx]
+		renderLang()
+		refreshLang()
+		notify(T("Idioma") .. ": " .. T(langOpts[idx]), "info")
+	end)
+end
+addSection("Sobre")
+addInfo("TestToolkit v99.0 • " .. (isMobile and "Mobile" or "PC") .. "\n" ..
+	(fileApiAvailable() and "File API: OK" or "File API: indisponível (save/load off)"), 48)
 
 --------------------------------------------------------------------
 -- BOTÕES MOBILE
@@ -2900,6 +3384,7 @@ end)
 
 closeBtn.MouseButton1Click:Connect(function() setMenu(false) end)
 refreshAll()
+refreshLang()
 
 UserInputService.InputBegan:Connect(function(input)
 	if rebinding then
@@ -2919,9 +3404,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v98.0 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v99.0 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v98.0 carregado com sucesso!")
+	print("[TestToolkit] v99.0 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2958,7 +3443,7 @@ UserInputService.InputBegan:Connect(function(input)
 		if Fling.flingSelected then Fling.flingSelected() end
 	elseif input.KeyCode == Settings.TouchFlingKey then
 		Settings.TouchFling = not Settings.TouchFling
-		notify("Touch Fling " .. (Settings.TouchFling and "ligado" or "desligado"), Settings.TouchFling and "on" or "off")
+		notify(T("Touch Fling") .. (Settings.TouchFling and " ✓" or " ✗"), Settings.TouchFling and "on" or "off")
 		if _G.TT_uiRefresh then pcall(_G.TT_uiRefresh) end
 	end
 end)
@@ -2998,7 +3483,6 @@ hudPad.PaddingLeft = UDim.new(0, 8)
 hudPad.PaddingRight = UDim.new(0, 8)
 hudPad.Parent = hud
 
--- Drag do HUD (só quando HUDEdit está ligado)
 do
 	local hDrag, hStart, hStartX, hStartY = false, nil, 0, 0
 	hud.InputBegan:Connect(function(input)
@@ -3030,7 +3514,6 @@ do
 		end
 	end)
 
-	-- Ativa o Active só enquanto o HUDEdit está ligado
 	task.spawn(function()
 		local lastEdit = false
 		while task.wait(0.1) do
@@ -3065,20 +3548,20 @@ RunService.RenderStepped:Connect(function(dt)
 				tostring(math.floor(lastFps or 0)) .. " FPS",
 				tostring(ping) .. " ms",
 			}
-			if Settings.Fly then parts[#parts + 1] = "Voo" end
-			if Settings.Noclip then parts[#parts + 1] = "Noclip" end
-			if Settings.StealthMode and Settings.WalkSpeedOn then parts[#parts + 1] = "🥷 Furtivo" end
-			if Settings.Fling then parts[#parts + 1] = "Fling" end
-			if Settings.HitboxExpander then parts[#parts + 1] = "Hitbox" end
-			if Settings.SeatInvisible then parts[#parts + 1] = "Invisível" end
-			if Fling.flingActive then parts[#parts + 1] = "🔥 FLING" end
+			if Settings.Fly then parts[#parts + 1] = T("Voo") end
+			if Settings.Noclip then parts[#parts + 1] = T("Noclip") end
+			if Settings.StealthMode and Settings.WalkSpeedOn then parts[#parts + 1] = "🥷 " .. T("Modo Furtivo") end
+			if Settings.Fling then parts[#parts + 1] = T("Fling") end
+			if Settings.HitboxExpander then parts[#parts + 1] = T("Hitbox") end
+			if Settings.SeatInvisible then parts[#parts + 1] = T("Invisível (Seat Bug)") end
+			if Fling.flingActive then parts[#parts + 1] = "🔥 " .. T("Fling") end
 			if Settings.TriggerBot and triggerBotActive then
 				parts[#parts + 1] = "🔫 " .. tostring(triggerTargetName or "?")
 			end
 			if Settings.AimBot and aimTarget then
 				parts[#parts + 1] = "🎯 " .. tostring(aimTargetName or "?")
 			end
-			if Settings.TouchFling then parts[#parts + 1] = "💥 TouchFling" end
+			if Settings.TouchFling then parts[#parts + 1] = "💥 " .. T("Touch Fling") end
 			if Settings.Spectating then parts[#parts + 1] = "👁 " .. tostring(Settings.SpectateTarget) end
 			hud.Text = " " .. table.concat(parts, "  •  ") .. " "
 		end
