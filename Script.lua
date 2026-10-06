@@ -77,7 +77,7 @@ local Settings = {
 
 	MENU_KEY = Enum.KeyCode.RightControl,
 
-	ShowHUD = true, HUDX = 10, HUDY = 40, HUDEdit = false,
+	ShowHUD = true, HUDX = 0, HUDY = 40, HUDEdit = false,
 	Notifications = true, MenuAlpha = 0.1,
 
 	MobileBtnSize = 64, MobileBtnAlpha = 0.15,
@@ -2977,7 +2977,8 @@ end)
 --------------------------------------------------------------------
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
-hud.Position = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
+hud.AnchorPoint = Vector2.new(0.5, 0)          -- centraliza horizontalmente
+hud.Position = UDim2.new(0.5, Settings.HUDX, 0, Settings.HUDY)
 hud.Size = UDim2.fromOffset(0, 22)
 hud.AutomaticSize = Enum.AutomaticSize.X
 hud.BackgroundColor3 = Theme.Bg
@@ -2986,7 +2987,7 @@ hud.BorderSizePixel = 0
 hud.Font = Enum.Font.GothamMedium
 hud.TextSize = 12
 hud.TextColor3 = Theme.Text
-hud.TextXAlignment = Enum.TextXAlignment.Left
+hud.TextXAlignment = Enum.TextXAlignment.Center
 hud.ZIndex = 30
 hud.Active = false
 hud.Selectable = false
@@ -2999,14 +3000,15 @@ hudPad.Parent = hud
 
 -- Drag do HUD (só funciona quando HUDEdit está ligado)
 do
-	local hDrag, hStart, hPos = false, nil, nil
+	local hDrag, hStart, hStartX, hStartY = false, nil, 0, 0
 	hud.InputBegan:Connect(function(input)
 		if not Settings.HUDEdit then return end
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			hDrag = true
 			hStart = input.Position
-			hPos = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
+			hStartX = Settings.HUDX
+			hStartY = Settings.HUDY
 		end
 	end)
 	UserInputService.InputChanged:Connect(function(input)
@@ -3014,11 +3016,11 @@ do
 		if input.UserInputType == Enum.UserInputType.MouseMovement
 			or input.UserInputType == Enum.UserInputType.Touch then
 			local d = input.Position - hStart
-			local nx = hPos.X.Offset + d.X
-			local ny = hPos.Y.Offset + d.Y
+			local nx = hStartX + d.X
+			local ny = hStartY + d.Y
 			Settings.HUDX = nx
 			Settings.HUDY = ny
-			hud.Position = UDim2.fromOffset(nx, ny)
+			hud.Position = UDim2.new(0.5, nx, 0, ny)
 		end
 	end)
 	UserInputService.InputEnded:Connect(function(input)
