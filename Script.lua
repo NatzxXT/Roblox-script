@@ -1,6 +1,6 @@
 --[[
-    TestToolkit v97.9
-    - HUD: abaixo da topbar, auto-size, arrastável
+    TestToolkit v98.0
+    - HUD centralizado no topo (abaixo da topbar do Roblox)
     - Fix voo: cai normal ao desativar
     - Trigger bot mobile: Tool:Activate() (não afeta controles)
     - Trigger bot PC: mouse simulation
@@ -128,7 +128,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.9 carregando...")
+bootShow("TestToolkit v98.0 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -1901,7 +1901,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.9"
+title.Text = "Test Toolkit v98.0"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2919,9 +2919,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.9 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v98.0 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.9 carregado com sucesso!")
+	print("[TestToolkit] v98.0 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
@@ -2973,11 +2973,11 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 --------------------------------------------------------------------
--- HUD
+-- HUD (centralizado no topo)
 --------------------------------------------------------------------
 local hud = Instance.new("TextLabel")
 hud.Name = "HUD"
-hud.AnchorPoint = Vector2.new(0.5, 0)          -- centraliza horizontalmente
+hud.AnchorPoint = Vector2.new(0.5, 0)
 hud.Position = UDim2.new(0.5, Settings.HUDX, 0, Settings.HUDY)
 hud.Size = UDim2.fromOffset(0, 22)
 hud.AutomaticSize = Enum.AutomaticSize.X
@@ -2998,7 +2998,7 @@ hudPad.PaddingLeft = UDim.new(0, 8)
 hudPad.PaddingRight = UDim.new(0, 8)
 hudPad.Parent = hud
 
--- Drag do HUD (só funciona quando HUDEdit está ligado)
+-- Drag do HUD (só quando HUDEdit está ligado)
 do
 	local hDrag, hStart, hStartX, hStartY = false, nil, 0, 0
 	hud.InputBegan:Connect(function(input)
@@ -3054,7 +3054,7 @@ RunService.RenderStepped:Connect(function(dt)
 			fpsFrames, fpsAcc = 0, 0
 		end
 		hud.Visible = Settings.ShowHUD or Settings.HUDEdit
-		hud.Position = UDim2.fromOffset(Settings.HUDX, Settings.HUDY)
+		hud.Position = UDim2.new(0.5, Settings.HUDX, 0, Settings.HUDY)
 		hud.BackgroundColor3 = Settings.HUDEdit and Theme.Accent or Theme.Bg
 		hudAcc += dt
 		if hudAcc >= 0.25 then
