@@ -1,6 +1,3 @@
-TestToolkit v97.5 — botões mobile arrastáveis
-
-```lua
 --[[
     TestToolkit v97.5
     - Trigger bot (qualquer parte do corpo, delay 0)
@@ -3013,20 +3010,3 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	end)
 end)
-```
-
-Como usar os botões arrastáveis
-
-Ação O que acontece
-Toque rápido Ativa/desativa a função (VOO, NOCLIP, ESP, FLING) ou abre o menu (TT)
-Toque + arrastar Move o botão pela tela
-Soltar Salva a nova posição (durante a sessão)
-Arrastar pra fora Botão é empurrado pra dentro automaticamente
-
-Detalhes
-
-· DRAG_THRESHOLD = 10 px: menos que isso = toque, mais = arrasto. Se errar muito, mude para 15.
-· Feedback visual: botão encolhe 4px enquanto você segura (tanto pra tocar quanto pra arrastar).
-· Dot de estado: bolinha no canto — verde quando ativo, cinza quando inativo.
-· Sem toggle nas configs: arrasta direto, sem precisar ativar nada. Adicionei uma seção Dica na aba Botões explicando isso.
-· Posições padrão ficam na tabela Settings.MobileBtnPos — se quiser mudar onde eles começam, edite ali.
