@@ -1,6 +1,7 @@
 --[[
-    TestToolkit v97.5
+    TestToolkit v97.6
     - Trigger bot (qualquer parte do corpo, delay 0)
+    - Trigger bot mobile: usa toque virtual (não esconde controles)
     - Aimbot (câmera lock) com FOV, smooth, LOS
     - Team check aprimorado (cache + Neutral + amigos + forcefield)
     - ESP apenas Highlight (sem barra de vida)
@@ -25,6 +26,25 @@ Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 end)
 
 local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+--------------------------------------------------------------------
+-- KEEPER MOBILE: mantém controles de toque visíveis
+-- (evita que o trigger bot esconda joystick/botão de pulo)
+--------------------------------------------------------------------
+if isMobile then
+	task.spawn(function()
+		while task.wait(0.1) do
+			pcall(function()
+				if UserInputService.MouseEnabled then
+					UserInputService.MouseEnabled = false
+				end
+				if UserInputService.MouseIconEnabled then
+					UserInputService.MouseIconEnabled = false
+				end
+			end)
+		end
+	end)
+end
 
 --------------------------------------------------------------------
 -- SETTINGS
@@ -130,10 +150,10 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.5 carregando...")
+bootShow("TestToolkit v97.6 carregando...")
 
 --------------------------------------------------------------------
--- TEAM CHECK (aprimorado)
+-- TEAM CHECK
 --------------------------------------------------------------------
 local teamCache = setmetatable({}, { __mode = "k" })
 
@@ -586,19 +606,34 @@ local function isTriggerActive()
 	return Settings.TriggerBotAlways or triggerHoldActive
 end
 
+-- SIMULATE CLICK (mobile: usa toque virtual pra não esconder controles)
 local function simulateClick()
-	local mouse = LocalPlayer:GetMouse()
-	if not mouse then return end
-	pcall(function()
-		if mouse1click then mouse1click() end
-	end)
-	pcall(function()
-		if mouse1down and mouse1up then
-			mouse1down()
+	if isMobile then
+		pcall(function()
+			VirtualUser:CaptureController()
+			local vp = Camera.ViewportSize
+			VirtualUser:ClickButton1(Vector2.new(vp.X / 2, vp.Y / 2))
+		end)
+		pcall(function()
+			local vp = Camera.ViewportSize
+			VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 1)
 			task.wait(0.005)
-			mouse1up()
-		end
-	end)
+			VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 1)
+		end)
+	else
+		local mouse = LocalPlayer:GetMouse()
+		if not mouse then return end
+		pcall(function()
+			if mouse1click then mouse1click() end
+		end)
+		pcall(function()
+			if mouse1down and mouse1up then
+				mouse1down()
+				task.wait(0.005)
+				mouse1up()
+			end
+		end)
+	end
 end
 
 RunService.RenderStepped:Connect(function()
@@ -643,6 +678,16 @@ RunService.RenderStepped:Connect(function()
 	triggerBotActive = true
 	lastTriggerShot = now
 	simulateClick()
+
+	-- Reforça controles mobile após o clique
+	if isMobile then
+		task.defer(function()
+			pcall(function()
+				UserInputService.MouseEnabled = false
+				UserInputService.MouseIconEnabled = false
+			end)
+		end)
+	end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -1880,7 +1925,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.5"
+title.Text = "Test Toolkit v97.6"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2617,7 +2662,7 @@ if isMobile then
 end
 
 --------------------------------------------------------------------
--- BOTÕES MOBILE (v97.5 — arrastáveis)
+-- BOTÕES MOBILE
 --------------------------------------------------------------------
 local mobileBtns = {}
 local DRAG_THRESHOLD = 10
@@ -2857,6 +2902,12 @@ local function setMenu(open)
 		tween(menu, { GroupTransparency = 1 }, 0.16)
 		tween(menuScale, { Scale = s * 0.94 }, 0.16)
 		task.delay(0.18, function() if not menuOpen then menu.Visible = false end end)
+		if isMobile then
+			pcall(function()
+				UserInputService.MouseEnabled = false
+				UserInputService.MouseIconEnabled = false
+			end)
+		end
 	end
 end
 _G.TT_setMenu = setMenu
@@ -2892,9 +2943,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.5 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.6 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.5 carregado com sucesso!")
+	print("[TestToolkit] v97.6 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
