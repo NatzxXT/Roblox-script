@@ -1,12 +1,9 @@
 --[[
-    TestToolkit v97.7
-    - Trigger bot mobile: usa Tool:Activate() (não afeta controles de toque)
+    TestToolkit v97.8
+    - Fix voo: cai normal ao desativar (não fica em gravidade lunar)
+    - Trigger bot mobile: usa Tool:Activate() (não afeta controles)
     - Trigger bot PC: mouse simulation normal
-    - Aimbot (câmera lock) com FOV, smooth, LOS
-    - Team check aprimorado (cache + Neutral + amigos + forcefield)
-    - ESP apenas Highlight
-    - Mouse fix + botões mobile arrastáveis
-    - Fling Bots + Fling Player Safe + K1LAS1K + Touch Fling + Spectate
+    - Aimbot, team check aprimorado, ESP highlight, mouse fix, botões arrastáveis
 ]]
 
 local Players = game:GetService("Players")
@@ -130,7 +127,7 @@ local function bootShow(text, color, hideAfter)
 		end
 	end)
 end
-bootShow("TestToolkit v97.7 carregando...")
+bootShow("TestToolkit v97.8 carregando...")
 
 --------------------------------------------------------------------
 -- TEAM CHECK
@@ -586,11 +583,6 @@ local function isTriggerActive()
 	return Settings.TriggerBotAlways or triggerHoldActive
 end
 
--- SIMULATE CLICK
--- Mobile: NUNCA toca em input de mouse (senão esconde os controles).
--- 1) Tenta ativar a Tool equipada (método mais seguro)
--- 2) Senão, usa VirtualUser:ClickButton1 (touch virtual)
--- PC: clique normal de mouse
 local function simulateClick()
 	if isMobile then
 		local char = LocalPlayer.Character
@@ -881,11 +873,21 @@ local function destroyFly()
 	if flyBG then pcall(function() flyBG:Destroy() end); flyBG = nil end
 	if flyPlat then
 		local hum = getLocalHumanoid()
-		if hum then
+		if hum and hum.Parent then
 			hum.PlatformStand = false
+			-- Sai do estado "Physics" (que o PlatformStand ativa).
+			-- Sem isso, a gravidade fica reduzida e o player cai devagar.
+			pcall(function()
+				if hum.FloorMaterial ~= Enum.Material.Air then
+					hum:ChangeState(Enum.HumanoidStateType.Running)
+				else
+					hum:ChangeState(Enum.HumanoidStateType.Freefall)
+				end
+			end)
 			local root = getLocalRoot()
-			if root then
-				root.AssemblyLinearVelocity = Vector3.zero
+			if root and root.Parent then
+				-- NÃO zera velocidade vertical → gravidade age naturalmente.
+				-- Zera só a rotação pra não ficar girando no ar.
 				root.AssemblyAngularVelocity = Vector3.zero
 			end
 		end
@@ -1444,6 +1446,8 @@ local wsActive, jpActive = false, false
 LocalPlayer.CharacterAdded:Connect(function()
 	wsActive, jpActive = false, false
 	lastSafe = nil
+	-- Reset do voo (limpa recursos antigos do char que morreu)
+	destroyFly()
 	if Settings.SeatInvisible then
 		Settings.SeatInvisible = false
 		if _G.TT_SeatInvisible then pcall(_G.TT_SeatInvisible.toggle) end
@@ -1901,7 +1905,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Theme.Text
-title.Text = "Test Toolkit v97.7"
+title.Text = "Test Toolkit v97.8"
 title.Parent = titleBar
 
 local subtitle = Instance.new("TextLabel")
@@ -2919,9 +2923,9 @@ end -- fim buildUI
 --------------------------------------------------------------------
 local okUI, errUI = pcall(buildUI)
 if okUI then
-	bootShow("TestToolkit v97.7 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
+	bootShow("TestToolkit v97.8 carregado  •  " .. (isMobile and "botão TT abre o menu" or "Ctrl direito abre o menu"),
 		Color3.fromRGB(80, 255, 130), 5)
-	print("[TestToolkit] v97.7 carregado com sucesso!")
+	print("[TestToolkit] v97.8 carregado com sucesso!")
 else
 	warn("[TestToolkit] erro na interface: " .. tostring(errUI))
 	bootShow("TestToolkit: erro: " .. tostring(errUI), Color3.fromRGB(255, 90, 90))
